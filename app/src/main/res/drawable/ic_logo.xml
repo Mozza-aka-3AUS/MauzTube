@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Logo MauzTube per l'interfaccia e per Android 7 (riquadro arrotondato + simbolo). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M30,6h48a24,24 0,0 1,24 24v48a24,24 0,0 1,-24 24h-48a24,24 0,0 1,-24 -24v-48a24,24 0,0 1,24 -24z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="6" android:startY="6"
+                android:endX="102" android:endY="102"
+                android:startColor="#FFE8202A"
+                android:endColor="#FFFF7A1A" />
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineJoin="round"
+        android:pathData="M40,30 L80,54 L40,78 L50,54 Z" />
+</vector>

@@ -1,0 +1,128 @@
+package com.mauztube.data.model
+
+import com.mauztube.util.tr
+
+import org.schabi.newpipe.extractor.Image
+import org.schabi.newpipe.extractor.InfoItem
+import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeStreamLinkHandlerFactory
+import org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators.YoutubeProgressiveDashManifestCreator
+import org.schabi.newpipe.extractor.stream.AudioStream
+import org.schabi.newpipe.extractor.stream.Stream
+import org.schabi.newpipe.extractor.stream.SubtitlesStream
+import org.schabi.newpipe.extractor.stream.AudioTrackType
+import org.schabi.newpipe.extractor.stream.DeliveryMethod
+import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import org.schabi.newpipe.extractor.stream.StreamType
+import org.schabi.newpipe.extractor.stream.VideoStream
+
+/**
+ * Unico punto di conversione NewPipe → dominio. Restituisce `null` per tutto ciò che non
+ * deve esistere nell'app: Shorts (vedi [ShortsFilter]) e tipi non supportati (playlist).
+ */
+object ContentMapper {
+
+    fun map(items: List<InfoItem>, aggressiveShorts: Boolean): List<ContentItem> =
+        items.mapNotNull { map(it, aggressiveShorts) }
+
+    fun mapVideos(items: List<InfoItem>, aggressiveShorts: Boolean): List<VideoItem> =
+        items.mapNotNull { map(it, aggressiveShorts) as? VideoItem }
+
+    fun map(item: InfoItem, aggressiveShorts: Boolean): ContentItem? = when (item) {
+        is StreamInfoItem -> if (ShortsFilter.isShort(item, aggressiveShorts)) null else item.toVideo()
+        is ChannelInfoItem -> item.toChannel()
+        else -> null
+    }
+
+    private fun StreamInfoItem.toVideo(): VideoItem? {
+        val id = videoIdOf(url) ?: return null
+        return VideoItem(
+            id = id,
+            url = url,
+            title = name,
+            uploaderName = uploaderName.orEmpty(),
+            uploaderUrl = uploaderUrl,
+            thumbnailUrl = thumbnails.bestUrl(),
+            durationSeconds = duration,
+            viewCount = viewCount,
+            textualUploadDate = textualUploadDate,
+            uploadedAtMillis = runCatching {
+                uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli()
+            }.getOrNull(),
+            isLive = streamType == StreamType.LIVE_STREAM || streamType == StreamType.AUDIO_LIVE_STREAM,
+            uploaderAvatarUrl = uploaderAvatars.bestUrl(),
+        )
+    }
+
+    private fun ChannelInfoItem.toChannel() = ChannelItem(
+        url = url,
+        name = name,
+        avatarUrl = thumbnails.bestUrl(),
+        subscriberCount = subscriberCount,
+        description = description,
+    )
+
+    fun videoIdOf(url: String): String? =
+        runCatching { YoutubeStreamLinkHandlerFactory.getInstance().getId(url) }.getOrNull()
+
+    /**
+     * Sceglie l'immagine più grande entro [maxHeight]: 480 px bastano per le card a tutta
+     * larghezza e pesano circa la metà della 720p (liste più veloci, meno dati).
+     */
+    fun List<Image>.bestUrl(maxHeight: Int = 480): String? {
+        if (isEmpty()) return null
+        val known = filter { it.height > 0 }
+        val pick = known.filter { it.height <= maxHeight }.maxByOrNull { it.height }
+            ?: known.minByOrNull { it.height }
+            ?: last()
+        return pick.url
+    }
+
+    // --- Stream ---
+
+    fun videoOption(s: VideoStream, durationSec: Long) = StreamOption(
+        url = s.content,
+        dashManifest = dashManifest(s, durationSec),
+        mimeType = s.format?.mimeType,
+        codec = s.codec,
+        height = s.height.takeIf { it > 0 } ?: s.getResolution().filter(Char::isDigit).take(4).toIntOrNull() ?: 0,
+        fps = s.fps,
+        bitrate = s.bitrate,
+        isOriginalAudio = true,
+        contentLength = s.itagItem?.contentLength ?: -1,
+        itag = s.itag,
+    )
+
+    fun audioOption(s: AudioStream, durationSec: Long) = StreamOption(
+        url = s.content,
+        dashManifest = dashManifest(s, durationSec),
+        mimeType = s.format?.mimeType,
+        codec = s.codec,
+        height = 0,
+        fps = 0,
+        bitrate = s.averageBitrate.takeIf { it > 0 } ?: s.bitrate,
+        isOriginalAudio = s.audioTrackType == null || s.audioTrackType == AudioTrackType.ORIGINAL,
+        contentLength = s.itagItem?.contentLength ?: -1,
+        itag = s.itag,
+    )
+
+    private fun dashManifest(s: Stream, durationSec: Long): String? {
+        val itag = s.itagItem ?: return null
+        return runCatching {
+            YoutubeProgressiveDashManifestCreator.fromProgressiveStreamingUrl(s.content, itag, durationSec)
+        }.getOrNull()
+    }
+
+    /** Sottotitoli: traccia manuale/automatica come la espone YouTube (TTML). */
+    fun subtitleOption(s: SubtitlesStream) = SubtitleOption(
+        url = s.content,
+        mimeType = s.format?.mimeType ?: "application/ttml+xml",
+        languageTag = s.languageTag,
+        label = s.displayLanguageName + if (s.isAutoGenerated) tr(" (auto-generated)", " (automatici)") else "",
+        autoGenerated = s.isAutoGenerated,
+    )
+
+    /** ExoPlayer riceve solo URL progressivi diretti; i manifest DASH OTF vengono scartati. */
+    fun isDirectProgressive(isUrl: Boolean, method: DeliveryMethod) =
+        isUrl && method == DeliveryMethod.PROGRESSIVE_HTTP
+}
