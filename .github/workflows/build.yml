@@ -15,6 +15,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # true se è configurato il keystore di firma (secret KEYSTORE_BASE64).
+      # Deve stare a livello di job: le variabili di un singolo step non sono leggibili nei suoi "if".
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -25,32 +29,17 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # Il pacchetto predefinito "tools" non esiste più nell'SDK: si installa solo il necessario.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Install Android 37 platform
-        run: sdkmanager "platforms;android-37.0"
+        with:
+          packages: "platform-tools platforms;android-37.0"
 
       - name: Set up Gradle (con cache)
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
-
-      - name: Build release APK (ottimizzato; chiave di debug se mancano i secret)
-        if: env.KEYSTORE_PRESENT != 'true'
-        env:
-          KEYSTORE_PRESENT: ${{ secrets.KEYSTORE_BASE64 != '' }}
-        run: ./gradlew assembleRelease --stacktrace
-
-      - name: Upload release APK (chiave di debug)
-        if: env.KEYSTORE_PRESENT != 'true'
-        env:
-          KEYSTORE_PRESENT: ${{ secrets.KEYSTORE_BASE64 != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: MauzTube-release-debugkey-${{ github.sha }}
-          path: app/build/outputs/apk/release/*.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -59,18 +48,31 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # ---- Release firmata (solo se i secret sono configurati) ----
+      # ---- Release ottimizzata firmata con la chiave di debug (senza keystore personale) ----
+      - name: Build release APK (chiave di debug)
+        if: env.HAS_KEYSTORE != 'true'
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Upload release APK (chiave di debug)
+        if: env.HAS_KEYSTORE != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MauzTube-release-debugkey-${{ github.sha }}
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      # ---- Release firmata con il keystore personale (solo se i secret sono configurati) ----
       - name: Decode keystore
         id: keystore
+        if: env.HAS_KEYSTORE == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        if: env.KEYSTORE_BASE64 != ''
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "path=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
 
       - name: Build signed release APK
-        if: steps.keystore.outputs.path != ''
+        if: env.HAS_KEYSTORE == 'true'
         env:
           MAUZTUBE_KEYSTORE: ${{ steps.keystore.outputs.path }}
           MAUZTUBE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -78,9 +80,10 @@ jobs:
           MAUZTUBE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Upload release APK
-        if: steps.keystore.outputs.path != ''
+      - name: Upload signed release APK
+        if: env.HAS_KEYSTORE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: MauzTube-release-${{ github.sha }}
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
