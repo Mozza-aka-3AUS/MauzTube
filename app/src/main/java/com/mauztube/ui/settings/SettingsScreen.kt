@@ -61,7 +61,10 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     val repo: SettingsRepository,
     val account: AccountManager,
+    private val searchHistory: com.mauztube.data.repository.SearchHistoryRepository,
 ) : ViewModel() {
+    fun clearSearchHistory() = viewModelScope.launch { searchHistory.clear() }
+
     /**
      * Stato mostrato: parte dal valore già in memoria e viene aggiornato SUBITO al tocco
      * (aggiornamento ottimistico); il salvataggio su disco avviene in background.
@@ -272,6 +275,21 @@ fun SettingsScreen(onLogin: () -> Unit, modifier: Modifier = Modifier, vm: Setti
             }
         }
         divider("d-res")
+
+        item(key = "search") { Section(tr("Search", "Ricerca")) }
+        item(key = "search-hist") {
+            SwitchRow(
+                tr("Save search history", "Salva la cronologia delle ricerche"),
+                tr("Recent searches appear under the search field (not in incognito mode)", "Le ricerche recenti compaiono sotto il campo di ricerca (non in modalità anonimo)"),
+                s.saveSearchHistory,
+            ) { v -> vm.set({ copy(saveSearchHistory = v) }) { setSaveSearchHistory(v) } }
+        }
+        item(key = "search-clear") {
+            TextButton(onClick = { vm.clearSearchHistory() }, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Text(tr("Clear search history", "Cancella la cronologia delle ricerche"))
+            }
+        }
+        divider("d-search")
 
         item(key = "subs") { Section(tr("Subtitles", "Sottotitoli")) }
         item(key = "subs-auto") {

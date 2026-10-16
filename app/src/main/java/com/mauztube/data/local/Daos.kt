@@ -217,3 +217,34 @@ interface DownloadDao {
     @Query("DELETE FROM download WHERE id = :id")
     suspend fun delete(id: Long)
 }
+
+@Dao
+interface SearchHistoryDao {
+    @Query("SELECT `query` FROM search_history ORDER BY usedAt DESC LIMIT 30")
+    fun observeRecent(): Flow<List<String>>
+
+    @Upsert
+    suspend fun upsert(entity: SearchHistoryEntity)
+
+    @Query("DELETE FROM search_history WHERE `query` = :query")
+    suspend fun delete(query: String)
+
+    @Query("DELETE FROM search_history")
+    suspend fun clear()
+
+    /** Tiene solo le 100 ricerche più recenti. */
+    @Query("DELETE FROM search_history WHERE `query` NOT IN (SELECT `query` FROM search_history ORDER BY usedAt DESC LIMIT 100)")
+    suspend fun trim()
+}
+
+@Dao
+interface MyCommentDao {
+    @Query("SELECT * FROM my_comment ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<MyCommentEntity>>
+
+    @Insert
+    suspend fun insert(entity: MyCommentEntity)
+
+    @Query("DELETE FROM my_comment WHERE id = :id")
+    suspend fun delete(id: Long)
+}

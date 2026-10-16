@@ -16,13 +16,15 @@ import androidx.room.RoomDatabase
         PlaylistItemEntity::class,
         RatingEntity::class,
         DownloadEntity::class,
+        SearchHistoryEntity::class,
+        MyCommentEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
     // v1 → v2: nuova colonna nullable + nuove tabelle, migrazione generata da Room
     // (cronologia, posizioni e iscrizioni vengono conservate).
     // v2 → v3: tabelle playlist (solo aggiunte).
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playbackDao(): PlaybackDao
@@ -33,4 +35,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun ratingDao(): RatingDao
     abstract fun downloadDao(): DownloadDao
+    abstract fun searchHistoryDao(): SearchHistoryDao
+    abstract fun myCommentDao(): MyCommentDao
 }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,6 +55,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import com.mauztube.ui.account.LoginScreen
 import com.mauztube.ui.channel.ChannelScreen
 import com.mauztube.ui.components.AppViewModel
@@ -67,6 +69,7 @@ import com.mauztube.ui.playlists.PlaylistDetailScreen
 import com.mauztube.ui.playlists.PlaylistsScreen
 import com.mauztube.ui.playlists.SaveToPlaylistDialog
 import com.mauztube.ui.queue.QueueBar
+import com.mauztube.ui.components.popOnChange
 import com.mauztube.ui.queue.QueueSheet
 import com.mauztube.ui.search.SearchScreen
 import com.mauztube.ui.settings.SettingsScreen
@@ -109,6 +112,7 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
     val app: AppViewModel = hiltViewModel()
     val onboardingDone by app.onboardingDone.collectAsStateWithLifecycle()
     val loggedIn by app.account.loggedIn.collectAsStateWithLifecycle()
+    val incognito by app.account.incognito.collectAsStateWithLifecycle()
     var queueOpen by remember { mutableStateOf(false) }
     // "Torna in cima": tasto Home premuto di nuovo o tocco sul logo.
     val homeScrollToTop = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
@@ -125,6 +129,19 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
             }
         }
     }
+
+    // La schermata video segue sempre il video in riproduzione (coda, riproduzione automatica).
+    LaunchedEffect(nav) {
+        app.playback.nowPlaying.collect { np ->
+            val entry = nav.currentBackStackEntry ?: return@collect
+            if (np != null && entry.destination.hasRoute(PlayerRoute::class) &&
+                entry.toRoute<PlayerRoute>().videoId != np.videoId
+            ) nav.openVideo(np.videoId)
+        }
+    }
+    // Lasciando la schermata video (non passando a un altro video) si esce dallo schermo intero.
+    val onPlayerRoute = destination?.hasRoute(PlayerRoute::class) == true
+    LaunchedEffect(onPlayerRoute) { if (!onPlayerRoute) app.playback.setFullscreen(false) }
 
     fun goHomeOrTop() {
         if (destination?.hasRoute(HomeRoute::class) == true) homeScrollToTop.tryEmit(Unit)
@@ -145,6 +162,26 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
                             else Text(topLevel.label, style = MaterialTheme.typography.titleLarge)
                         },
                         actions = {
+                            val ctx = androidx.compose.ui.platform.LocalContext.current
+                            IconButton(onClick = {
+                                val on = !incognito
+                                app.account.setIncognito(on)
+                                android.widget.Toast.makeText(
+                                    ctx,
+                                    if (on) tr("Incognito mode on", "Modalità anonimo attiva") else tr("Incognito mode off", "Modalità anonimo disattivata"),
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }) {
+                                val tint by androidx.compose.animation.animateColorAsState(
+                                    if (incognito) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    tween(com.mauztube.ui.components.Motion.MEDIUM), label = "incognitoTint",
+                                )
+                                Icon(
+                                    AppIcons.Incognito, tr("Incognito mode", "Modalità anonimo"),
+                                    tint = tint,
+                                    modifier = Modifier.popOnChange(incognito),
+                                )
+                            }
                             IconButton(onClick = { nav.navigate(SearchRoute()) }) { Icon(Icons.Default.Search, tr("Search", "Cerca")) }
                         },
                     )
@@ -185,10 +222,35 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
             // A schermo intero il player usa TUTTO il display (anche la zona del foro della
             // fotocamera): nessun margine della Scaffold esterna.
             Box(Modifier.padding(if (fullscreen) androidx.compose.foundation.layout.PaddingValues(0.dp) else padding).fillMaxSize()) {
+                Column(Modifier.fillMaxSize()) {
+                // Avviso della modalità anonimo, sotto la barra in alto.
+                androidx.compose.animation.AnimatedVisibility(
+                    incognito && topLevel != null,
+                    enter = androidx.compose.animation.expandVertically(tween(com.mauztube.ui.components.Motion.MEDIUM)) +
+                        fadeIn(tween(com.mauztube.ui.components.Motion.MEDIUM)),
+                    exit = androidx.compose.animation.shrinkVertically(tween(com.mauztube.ui.components.Motion.FAST)) +
+                        fadeOut(tween(com.mauztube.ui.components.Motion.FAST)),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer)
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(AppIcons.Incognito, null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(18.dp))
+                        Text(
+                            tr("Incognito: history isn't saved and your account isn't used",
+                                "Anonimo: la cronologia non viene salvata e l'account non viene usato"),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                        )
+                        androidx.compose.material3.TextButton(onClick = { app.account.setIncognito(false) }) { Text(tr("Turn off", "Disattiva")) }
+                    }
+                }
                 NavHost(
                     nav,
                     startDestination = HomeRoute,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                     enterTransition = { fadeIn(tween(NAV_ANIM_MS)) },
                     exitTransition = { fadeOut(tween(NAV_ANIM_MS)) },
                     popEnterTransition = { fadeIn(tween(NAV_ANIM_MS)) },
@@ -217,7 +279,23 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
                         PlaylistDetailScreen(onBack = { nav.popBackStack() }, onVideo = openVideo)
                     }
                     // Dalla cronologia il video riprende sempre dal punto interrotto.
-                    composable<HistoryRoute> { HistoryScreen(onVideo = { nav.openVideo(it, resume = true) }) }
+                    composable<HistoryRoute> {
+                        HistoryScreen(onVideo = { nav.openVideo(it, resume = true) }, onMyComments = { nav.navigate(MyCommentsRoute) })
+                    }
+                    composable<MyCommentsRoute> {
+                        com.mauztube.ui.mycomments.MyCommentsScreen(
+                            onBack = { nav.popBackStack() },
+                            onVideo = openVideo,
+                            onAccountComments = { nav.navigate(AccountCommentsRoute) },
+                        )
+                    }
+                    composable<AccountCommentsRoute> {
+                        com.mauztube.ui.mycomments.AccountWebScreen(
+                            title = tr("Account comments", "Commenti dell'account"),
+                            url = com.mauztube.ui.mycomments.ACCOUNT_COMMENTS_URL,
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
                     composable<SettingsRoute> { SettingsScreen(onLogin = openLogin) }
                     composable<LoginRoute> { LoginScreen(onDone = { nav.popBackStack() }) }
                     composable<SearchRoute> {
@@ -236,6 +314,7 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
                     }
                 }
 
+                }
                 // Mini player + barra della coda, disponibili in tutta l'app.
                 val onPlayer = destination?.hasRoute(PlayerRoute::class) == true
                 val onLogin = destination?.hasRoute(LoginRoute::class) == true

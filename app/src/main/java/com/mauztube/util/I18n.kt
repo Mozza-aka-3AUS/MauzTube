@@ -42,8 +42,11 @@ object I18n {
 
     /** Lingua dei contenuti YouTube (date relative, contatori, titoli localizzati). */
     fun applyToExtractor() {
-        val country = Locale.getDefault().country.ifBlank { if (language == AppLanguage.IT) "IT" else "US" }
-        NewPipe.setupLocalization(Localization(language.tag, country), ContentCountry(country))
+        val country = Locale.getDefault().country.ifBlank { if (language == AppLanguage.IT) "IT" else "GB" }
+        // Formati europei: l'inglese usa le convenzioni britanniche (giorno-mese-anno),
+        // l'italiano quelle italiane. Il paese dei contenuti resta quello del dispositivo.
+        val localization = if (language == AppLanguage.IT) Localization("it", "IT") else Localization("en", "GB")
+        NewPipe.setupLocalization(localization, ContentCountry(country))
     }
 
     /** Contesto con la lingua dell'app (risorse di sistema, formati numerici, notifiche). */

@@ -188,8 +188,17 @@ fun PlayerWithControls(
     onOpenQueue: () -> Unit,
     storyboard: Storyboard?,
     onPip: () -> Unit,
+    autoplay: Boolean,
+    loop: Boolean,
+    onToggleAutoplay: () -> Unit,
+    onToggleLoop: () -> Unit,
+    related: List<com.mauztube.data.model.VideoItem>,
+    onOpenRelated: (com.mauztube.data.model.VideoItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Pannello dei consigliati a schermo intero (si apre trascinando verso l'alto).
+    var relatedOpen by remember { mutableStateOf(false) }
+    if (!fullscreen && relatedOpen) relatedOpen = false
     val onToggleFullscreen = { onSetFullscreen(!fullscreen) }
     val player = manager.player
     val snap = rememberPlayerSnapshot(player)
@@ -208,7 +217,7 @@ fun PlayerWithControls(
         }
     }
     LaunchedEffect(seekFeedback) {
-        if (seekFeedback != null) { delay(700); seekFeedback = null }
+        if (seekFeedback != null) { delay(if ((seekFeedback?.length ?: 0) > 8) 1_400 else 700); seekFeedback = null }
     }
 
     Box(modifier.background(Color.Black)) {
@@ -237,7 +246,9 @@ fun PlayerWithControls(
         // Livello gesti:
         //  - tocco: mostra/nascondi SUBITO (nessuna attesa per distinguere il doppio tocco);
         //  - secondo tocco rapido sullo stesso lato: ±10 s;
-        //  - trascinamento verticale: giù = esci da schermo intero, su = schermo intero.
+        //  - trascinamento verticale:
+        //      verticale  → giù = mini player, su = schermo intero
+        //      schermo intero → su = consigliati, giù = chiudi consigliati / esci da schermo intero
         val density = androidx.compose.ui.platform.LocalDensity.current
         val swipeThreshold = with(density) { 64.dp.toPx() }
         Box(
@@ -256,8 +267,16 @@ fun PlayerWithControls(
                     detectVerticalDragGestures(
                         onDragStart = { total = 0f },
                         onDragEnd = {
-                            if (fullscreen && total > swipeThreshold) onSetFullscreen(false)
-                            else if (!fullscreen && total < -swipeThreshold) onSetFullscreen(true)
+                            when {
+                                fullscreen && relatedOpen && total > swipeThreshold -> relatedOpen = false
+                                fullscreen && total > swipeThreshold -> onSetFullscreen(false)
+                                fullscreen && total < -swipeThreshold && related.isNotEmpty() -> {
+                                    relatedOpen = true
+                                    visible = false
+                                }
+                                !fullscreen && total > swipeThreshold -> onMinimize()
+                                !fullscreen && total < -swipeThreshold -> onSetFullscreen(true)
+                            }
                         },
                         onVerticalDrag = { change, amount -> change.consume(); total += amount },
                     )
@@ -294,6 +313,25 @@ fun PlayerWithControls(
                     if (queueSize > 0) {
                         ControlButton(AppIcons.Queue, tr("Queue ($queueSize)", "Coda ($queueSize)"), onOpenQueue, tint = primary)
                     }
+                    ControlButton(
+                        AppIcons.Autoplay, tr("Autoplay", "Riproduzione automatica"),
+                        onClick = {
+                            onToggleAutoplay()
+                            seekFeedback = if (!autoplay) tr("Autoplay on", "Riproduzione automatica attiva")
+                            else tr("Autoplay off", "Riproduzione automatica disattivata")
+                            interaction++
+                        },
+                        tint = if (autoplay) primary else Color.White,
+                    )
+                    ControlButton(
+                        AppIcons.RepeatOne, tr("Loop", "Ripeti"),
+                        onClick = {
+                            onToggleLoop()
+                            seekFeedback = if (!loop) tr("Loop on", "Ripetizione attiva") else tr("Loop off", "Ripetizione disattivata")
+                            interaction++
+                        },
+                        tint = if (loop) primary else Color.White,
+                    )
                     ControlButton(AppIcons.PictureInPicture, tr("Pop-up", "Popup"), onPip)
                     ControlButton(
                         AppIcons.Headphones, tr("Audio only", "Solo audio"), onToggleAudioOnly,
@@ -387,6 +425,19 @@ fun PlayerWithControls(
                     Spacer(Modifier.height(if (fullscreen) 12.dp else 2.dp))
                 }
             }
+        }
+        // ---- Consigliati a schermo intero ----
+        AnimatedVisibility(
+            visible = relatedOpen,
+            enter = androidx.compose.animation.slideInVertically { it } + fadeIn(),
+            exit = androidx.compose.animation.slideOutVertically { it } + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            RelatedOverlay(
+                related = related,
+                onOpen = { relatedOpen = false; onOpenRelated(it) },
+                onClose = { relatedOpen = false },
+            )
         }
     }
 
@@ -627,6 +678,56 @@ private fun ScrubPreview(storyboard: Storyboard, positionMs: Long, fraction: Flo
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.padding(vertical = 4.dp),
             )
+        }
+    }
+}
+
+/** Fila di consigliati sopra il video a schermo intero, come nel client ufficiale. */
+@Composable
+private fun RelatedOverlay(
+    related: List<com.mauztube.data.model.VideoItem>,
+    onOpen: (com.mauztube.data.model.VideoItem) -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth()
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                )
+            )
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(top = 24.dp, bottom = 12.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(tr("Up next", "Consigliati"), color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            ControlButton(Icons.Default.KeyboardArrowDown, tr("Close", "Chiudi"), onClose)
+        }
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(related.size, key = { related[it].id }) { i ->
+                val v = related[i]
+                Column(Modifier.width(220.dp).clip(RoundedCornerShape(10.dp)).clickable { onOpen(v) }) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Color.DarkGray)) {
+                        AsyncImage(v.thumbnailUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        val d = Format.duration(v.durationSeconds)
+                        if (d.isNotEmpty()) {
+                            Text(
+                                d, color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp)
+                                    .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp),
+                            )
+                        }
+                    }
+                    Text(
+                        v.title, color = Color.White, style = MaterialTheme.typography.bodySmall, maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
+                    )
+                    Text(v.uploaderName, color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ import android.app.Application
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
+import coil3.request.crossfade
 import coil3.request.allowRgb565
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.mauztube.data.extractor.NewPipeDownloader
@@ -50,6 +51,8 @@ class MauzTubeApp : Application(), SingletonImageLoader.Factory {
             .components { add(OkHttpNetworkFetcherFactory(callFactory = { okHttpClient })) }
             // Miniature in RGB_565: metà memoria, meno GC durante lo scroll (non serve trasparenza).
             .allowRgb565(true)
+            // Le miniature appena scaricate compaiono in dissolvenza (non quelle già in memoria).
+            .crossfade(150)
             .memoryCache { coil3.memory.MemoryCache.Builder().maxSizePercent(context, 0.15).build() }
             .build()
 }

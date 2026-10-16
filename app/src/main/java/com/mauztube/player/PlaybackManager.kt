@@ -44,6 +44,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -110,9 +112,21 @@ class PlaybackManager @Inject constructor(
      * Creato al primo video (non all'avvio dell'app): avvio più rapido e niente thread/
      * memoria del player finché non serve.
      */
-    val player: ExoPlayer by lazy { buildPlayer().also { it.addListener(listener) } }
+    val player: ExoPlayer by lazy {
+        buildPlayer().also {
+            it.addListener(listener)
+            it.addAnalyticsListener(PlaybackDiagnostics())
+        }
+    }
 
-    private fun buildPlayer(): ExoPlayer = ExoPlayer.Builder(context)
+    private fun buildPlayer(): ExoPlayer = ExoPlayer.Builder(
+        context,
+        // Se il decoder hardware non si avvia per un formato, si ripiega su un altro decoder
+        // invece di fermare la riproduzione con un errore.
+        androidx.media3.exoplayer.DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(codecSelector),
+    )
         .setAudioAttributes(
             AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
             /* handleAudioFocus = */ true,
@@ -122,6 +136,7 @@ class PlaybackManager @Inject constructor(
         .setSeekBackIncrementMs(10_000)
         .setSeekForwardIncrementMs(10_000)
         .setLoadControl(mediaSourceBuilder.loadControl())
+        .setTrackSelector(mediaSourceBuilder.trackSelector(context))
         .build()
 
     private val skipper by lazy { SponsorSkipper(player) }
@@ -145,6 +160,13 @@ class PlaybackManager @Inject constructor(
     /** Dimensioni del video corrente (rapporto della finestra popup). */
     private val _videoSize = MutableStateFlow(androidx.media3.common.VideoSize.UNKNOWN)
     val videoSize: StateFlow<androidx.media3.common.VideoSize> = _videoSize
+
+    /** Loop del video corrente (si azzera aprendo un altro video). */
+    private val _loop = MutableStateFlow(false)
+    val loop: StateFlow<Boolean> = _loop
+
+    /** Video già riprodotti in questa sessione: la riproduzione automatica non li ripropone. */
+    private val playedThisSession = LinkedHashSet<String>()
 
     private val _audioOnly = MutableStateFlow(false)
     val audioOnly: StateFlow<Boolean> = _audioOnly
@@ -174,6 +196,43 @@ class PlaybackManager @Inject constructor(
     /** Aperto dalla cronologia: riprende dal punto salvato anche se la ripresa automatica è spenta. */
     private var forceResume = false
 
+    /**
+     * Decoder che hanno dato errore durante la decodifica: vengono esclusi e la riproduzione
+     * riprende con il successivo (tipicamente quello software). Alcuni decoder hardware sono
+     * difettosi con certi profili video.
+     */
+    private val blockedDecoders = java.util.concurrent.CopyOnWriteArraySet<String>()
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private val codecSelector = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mime, secure, tunneling ->
+        androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfos(mime, secure, tunneling)
+            .filter { it.name !in blockedDecoders }
+    }
+
+    /** @return true se l'errore era di un decoder e si è ripartiti con un altro. */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun recoverFromDecoderError(error: PlaybackException): Boolean {
+        if (error.errorCode != PlaybackException.ERROR_CODE_DECODING_FAILED &&
+            error.errorCode != PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
+        ) return false
+        var cause: Throwable? = error
+        var name: String? = null
+        while (cause != null && name == null) {
+            name = when (cause) {
+                is androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException -> cause.codecInfo?.name
+                is androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException -> cause.codecInfo?.name
+                else -> null
+            }
+            cause = cause.cause
+        }
+        if (name == null || !blockedDecoders.add(name)) return false
+        Log.w(TAG, "Decoder $name escluso dopo un errore: si riprova con il successivo")
+        val position = player.currentPosition
+        player.seekTo(position)
+        player.prepare()
+        player.playWhenReady = true
+        return true
+    }
+
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
@@ -185,11 +244,17 @@ class PlaybackManager @Inject constructor(
                 savePosition(finished = true)
                 reportWatchProgress()
                 val next = _queue.value.firstOrNull()
-                if (next != null) {
-                    _queue.value = _queue.value.drop(1)
-                    main.launch { open(next.id, next) }
-                } else {
-                    appScope.launch(saveDispatcher) { playback.clearActiveVideo() }
+                val autoNext = if (next == null && settingsRepo.state.value?.autoplayNext == true) {
+                    details?.related?.firstOrNull { it.id !in playedThisSession && !it.isLive }
+                } else null
+                when {
+                    next != null -> {
+                        _queue.value = _queue.value.drop(1)
+                        main.launch { open(next.id, next) }
+                    }
+                    // Riproduzione automatica: primo consigliato non ancora visto in questa sessione.
+                    autoNext != null -> main.launch { open(autoNext.id, autoNext) }
+                    else -> appScope.launch(saveDispatcher) { playback.clearActiveVideo() }
                 }
             }
         }
@@ -208,6 +273,7 @@ class PlaybackManager @Inject constructor(
 
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "Errore di riproduzione", error)
+            if (recoverFromDecoderError(error)) return
             // Gli URL googlevideo scadono (~6 h): un tentativo automatico di ri-estrazione.
             if (!autoRetried) {
                 autoRetried = true
@@ -236,6 +302,10 @@ class PlaybackManager @Inject constructor(
             return
         }
         forceResume = resume
+        playedThisSession += videoId
+        if (playedThisSession.size > 200) playedThisSession.remove(playedThisSession.first())
+        _loop.value = false
+        player.repeatMode = Player.REPEAT_MODE_OFF
         // Il video precedente viene chiuso salvandone posizione e cronologia.
         if (_nowPlaying.value != null) {
             savePosition()
@@ -285,6 +355,22 @@ class PlaybackManager @Inject constructor(
     }
 
     fun undoSkip(event: SkipEvent) = skipper.undo(event)
+
+    /** Loop del video corrente. */
+    fun setLoop(enabled: Boolean) {
+        _loop.value = enabled
+        player.repeatMode = if (enabled) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    }
+
+    /** Riproduzione automatica del prossimo consigliato (impostazione salvata). */
+    val autoplay: StateFlow<Boolean> by lazy {
+        settingsRepo.settings.map { it.autoplayNext }
+            .stateIn(main, kotlinx.coroutines.flow.SharingStarted.Eagerly, settingsRepo.state.value?.autoplayNext ?: false)
+    }
+
+    fun setAutoplay(enabled: Boolean) {
+        appScope.launch { settingsRepo.setAutoplayNext(enabled) }
+    }
 
     // ---------------- Coda ----------------
 
@@ -454,9 +540,9 @@ class PlaybackManager @Inject constructor(
                 launch { ratings.counts(videoId)?.let { if (_nowPlaying.value?.videoId == videoId) _votes.value = it } }
             }
             if (personalizedRelated == null && d.related.isNotEmpty()) {
-                appScope.launch { videoCache.saveRelated(videoId, d.related) }
+                if (!incognito) appScope.launch { videoCache.saveRelated(videoId, d.related) }
             }
-            appScope.launch(saveDispatcher) { playback.setActiveVideo(videoId) }
+            if (!incognito) appScope.launch(saveDispatcher) { playback.setActiveVideo(videoId) }
             savePosition()
 
             loopsJob = main.launch {
@@ -496,7 +582,7 @@ class PlaybackManager @Inject constructor(
         }
         val related = relatedAll.takeIf { it.isNotEmpty() } ?: return
         personalizedRelated = related
-        appScope.launch { videoCache.saveRelated(videoId, related) }
+        if (!incognito) appScope.launch { videoCache.saveRelated(videoId, related) }
         details = details?.copy(related = related)
         _nowPlaying.update { np ->
             val s = np?.state
@@ -590,7 +676,11 @@ class PlaybackManager @Inject constructor(
 
     // ---------------- Salvataggi ----------------
 
+    /** In modalità anonimo non si registra nulla (posizioni, cronologia, cache dei consigli). */
+    private val incognito: Boolean get() = account.incognito.value
+
     fun savePosition(finished: Boolean = false) {
+        if (incognito) return
         val d = details ?: return
         if (d.isLive) return
         val position = player.currentPosition

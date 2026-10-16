@@ -95,6 +95,10 @@ class InnerTubeClient @Inject constructor(
         val extraClient: Map<String, String> = emptyMap(),
     )
 
+    /** Richiesta autenticata generica con il client WEB. */
+    suspend fun postWeb(endpoint: String, body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): JsonObject =
+        post(endpoint, body)
+
     private suspend fun post(
         endpoint: String,
         body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit,

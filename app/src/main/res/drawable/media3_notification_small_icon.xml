@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Icona piccola delle notifiche (sostituisce quella predefinita di Media3): simbolo MauzTube. -->
+<!-- Icona piccola delle notifiche: simbolo MauzTube (anello + testina + play), monocromatico. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.6"
-        android:strokeLineJoin="round"
-        android:pathData="M6,4 L20,12 L6,20 L9.3,12 Z" />
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="1.5" android:scaleY="1.5">
+        <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="7.5"
+            android:strokeLineCap="round" android:pathData="M78.43,45.11 A26,26 0 1,1 58.51,28.39" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M70.71,34.08 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+        <path android:fillColor="#FFFFFFFF" android:strokeColor="#FFFFFFFF" android:strokeWidth="5"
+            android:strokeLineJoin="round" android:pathData="M48.5,43 L64.5,54 L48.5,65 Z" />
+    </group>
 </vector>

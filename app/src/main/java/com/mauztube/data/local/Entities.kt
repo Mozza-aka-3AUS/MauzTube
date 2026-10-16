@@ -150,3 +150,21 @@ data class DownloadEntity(
     val error: String?,
     val createdAt: Long,
 )
+
+/** Ricerche recenti (mostrate sotto il campo di ricerca). */
+@Entity(tableName = "search_history", indices = [Index("usedAt")])
+data class SearchHistoryEntity(
+    @PrimaryKey val query: String,
+    val usedAt: Long,
+)
+
+/** Commenti pubblicati da MauzTube con l'account, con il video a cui si riferiscono. */
+@Entity(tableName = "my_comment", indices = [Index("createdAt")])
+data class MyCommentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val videoId: String,
+    val videoTitle: String,
+    val thumbnailUrl: String?,
+    val text: String,
+    val createdAt: Long,
+)

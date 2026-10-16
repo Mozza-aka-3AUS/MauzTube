@@ -24,5 +24,9 @@ object Format {
         else -> n.toString()
     }
 
+    /** Data in formato europeo: 15/10/2026. */
+    fun date(epochMillis: Long): String =
+        java.text.SimpleDateFormat("dd/MM/yyyy", Locale.ROOT).format(java.util.Date(epochMillis))
+
     fun views(n: Long) = if (n < 0) "" else tr("${count(n)} views", "${count(n)} visualizzazioni")
 }

@@ -70,6 +70,8 @@ data class VideoDetails(
     val textualUploadDate: String?,
     val isLive: Boolean,
     val streams: PlayableStreams,
+    /** Data di pubblicazione (mostrata in formato europeo gg/mm/aaaa). */
+    val uploadedAtMillis: Long? = null,
     val subtitles: List<SubtitleOption>,
     val related: List<VideoItem>,
     val storyboard: Storyboard? = null,

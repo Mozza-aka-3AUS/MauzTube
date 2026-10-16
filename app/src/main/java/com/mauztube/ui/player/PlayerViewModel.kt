@@ -49,6 +49,10 @@ class PlayerViewModel @Inject constructor(
     val queue = manager.queue
 
     val fullscreen: StateFlow<Boolean> = manager.fullscreen
+    val autoplay: StateFlow<Boolean> = manager.autoplay
+    val loop: StateFlow<Boolean> = manager.loop
+    fun toggleAutoplay() = manager.setAutoplay(!autoplay.value)
+    fun toggleLoop() = manager.setLoop(!loop.value)
     val votes = manager.votes
 
     /** 1 = mi piace, -1 = non mi piace, 0 = nessuna valutazione. */

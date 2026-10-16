@@ -65,6 +65,8 @@ object AppModule {
     @Provides fun provideSubscriptionDao(db: AppDatabase): SubscriptionDao = db.subscriptionDao()
     @Provides fun provideWatchLaterDao(db: AppDatabase): WatchLaterDao = db.watchLaterDao()
     @Provides fun provideVideoCacheDao(db: AppDatabase): VideoCacheDao = db.videoCacheDao()
+    @Provides fun provideSearchHistoryDao(db: AppDatabase): com.mauztube.data.local.SearchHistoryDao = db.searchHistoryDao()
+    @Provides fun provideMyCommentDao(db: AppDatabase): com.mauztube.data.local.MyCommentDao = db.myCommentDao()
     @Provides fun provideDownloadDao(db: AppDatabase): com.mauztube.data.local.DownloadDao = db.downloadDao()
     @Provides fun provideRatingDao(db: AppDatabase): com.mauztube.data.local.RatingDao = db.ratingDao()
     @Provides fun providePlaylistDao(db: AppDatabase): com.mauztube.data.local.PlaylistDao = db.playlistDao()

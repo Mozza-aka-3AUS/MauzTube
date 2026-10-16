@@ -24,10 +24,10 @@ UI (Compose)  ──►  ViewModel (StateFlow)  ──►  Repository  ──►
 |---|---|
 | `data/extractor` | `NewPipeDownloader`: tutte le richieste HTTP di NewPipeExtractor passano da OkHttp |
 | `data/model` | Modelli di dominio, `ContentMapper` (NewPipe → dominio), `ShortsFilter` |
-| `data/local` | Room: posizioni/cronologia, cache SponsorBlock, iscrizioni |
+| `data/local` | Room: posizioni/cronologia, cache SponsorBlock, iscrizioni, cronologia ricerche, commenti pubblicati |
 | `data/remote` | `SponsorBlockApi` (endpoint hash-prefix) |
 | `data/prefs` | `SettingsRepository` (DataStore): preferenze e sessione attiva |
-| `data/repository` | `YouTubeRepository`, `SponsorBlockRepository`, `PlaybackRepository`, `SubscriptionRepository` |
+| `data/repository` | `YouTubeRepository`, `SponsorBlockRepository`, `PlaybackRepository`, `SubscriptionRepository`, `CommentsRepository`, `SearchHistoryRepository` |
 | `player` | `MediaSourceBuilder` (scelta stream + header per googlevideo), `SponsorSkipper` |
 | `data/account` | `AccountManager`: sessione Google (cookie del WebView di login, header `SAPISIDHASH`) |
 | `data/innertube` | `InnerTubeClient` + `InnerTubeParser`: home consigliata e correlati personalizzati |
@@ -148,7 +148,9 @@ Interventi:
    metadati itag (`YoutubeProgressiveDashManifestCreator`, come NewPipe), invece di un'unica
    richiesta progressiva aperta. ExoPlayer scarica blocchi con range limitato, quindi avvio e
    seek sono più rapidi e non c'è throttling.
-5. **Buffer d'avvio** di 1 s (default ExoPlayer 2,5 s).
+5. **Buffer d'avvio** di 1,5 s (2,5 s dopo uno stallo) e buffer di riserva tra 30 e 50 s, così
+   un calo momentaneo della rete non blocca il video. La qualità automatica usa il 65% della
+   banda stimata, per non salire a una risoluzione che la rete non regge.
 
 ### Salto sponsor senza blocchi
 Con la richiesta progressiva aperta, un seek fuori dal buffer (come lo skip di uno sponsor)
@@ -174,6 +176,25 @@ attivare automaticamente nella lingua del dispositivo.
 - **Controlli personalizzati** in Compose, con i colori del tema: barra con buffer e segmenti
   SponsorBlock, doppio tocco ±10 s, menu **Qualità** (automatica o fissa), **Velocità** e
   **Sottotitoli**, pulsante **Solo audio**.
+- In alto nel player: **Riproduzione automatica** (a fine video parte il primo consigliato non
+  ancora visto; disattivata di default, la scelta viene ricordata) e **Ripeti** il video
+  (disattivato di default).
+- **Gesti**: in verticale trascinando il video verso il basso diventa mini player; a schermo
+  intero trascinando verso l'alto compaiono i video consigliati.
+- **Decoder di riserva**: se il decoder hardware del telefono fallisce, il video riparte dallo
+  stesso punto con un altro decoder invece di fermarsi con un errore.
+- **Data di pubblicazione** in formato europeo (gg/mm/aaaa).
+
+### Commenti, ricerche, modalità anonimo
+- **Commenti** sotto il video (caricati solo quando arrivi a quel punto, per non rallentare
+  l'apertura), con risposte e caricamento progressivo. Con l'account collegato si può
+  **commentare**. In **Cronologia → I tuoi commenti** ci sono i commenti pubblicati da MauzTube,
+  con il relativo video, e la pagina dell'attività Google con tutti i commenti dell'account.
+- **Cronologia ricerche** (attiva di default, disattivabile e cancellabile dalle Impostazioni):
+  le ultime ricerche compaiono toccando la barra di ricerca e si possono rimuovere una per una.
+- **Modalità anonimo** (icona in alto): finché è attiva non vengono salvati cronologia, punti di
+  ripresa e ricerche, e l'account non viene usato. Vale fino alla chiusura dell'app, oppure si
+  disattiva dal banner in alto.
 - **Cronologia**: con l'account collegato è quella dell'account Google, con il punto di ripresa
   locale sovrapposto; altrimenti è quella locale.
 
@@ -198,6 +219,12 @@ automatica **disattivate** (si attivano dalle Impostazioni).
 ### Fluidità
 - Transizioni di navigazione da 140 ms (il default di Navigation Compose è 700 ms).
 - Tocco sul player immediato: il doppio tocco ±10 s non ritarda più il tocco singolo.
+- **Animazioni leggere** (`ui/components/Motion.kt`): casella di ricerca a pillola con sfondo
+  animato, ricerche recenti e risultati in dissolvenza, miniature in dissolvenza solo quando
+  arrivano dalla rete, entrata del mini player, banner anonimo, "rimbalzo" di Mi piace/Non mi
+  piace. Durano 150–220 ms e cambiano solo trasparenza, scala e posizione in `graphicsLayer`,
+  quindi non ricompongono né rimisurano la schermata. Misurato sull'emulatore: il lavoro
+  dell'app per fotogramma durante lo scorrimento resta sotto 1 ms, come senza animazioni.
 - `profileinstaller`: i Baseline Profile di Compose vengono compilati anche su APK
   sideloaded. **Per un'app fluida va installato l'APK release**: la build debug è
   "debuggable" e Compose al suo interno è molto più lento. Senza keystore personale la release
@@ -237,9 +264,9 @@ automatica **disattivate** (si attivano dalle Impostazioni).
 
 ### Fluidità misurata
 Misure fatte su un emulatore Android 17, prima e dopo, con gli script in `tools/baseline-profile/`:
-- **Baseline Profile** (`app/src/main/baseline-prof.txt`, circa 70.000 righe), registrato da un
+- **Baseline Profile** (`app/src/main/baseline-prof.txt`, circa 73.000 righe), registrato da un
   percorso d'uso reale. Android compila in anticipo il codice dell'app (avvio, schede,
-  ricerca, scorrimento, player) invece di interpretarlo. Durante lo scorrimento il lavoro
+  ricerca, scorrimento, player, commenti) invece di interpretarlo. Durante lo scorrimento il lavoro
   di Compose scende da 0,4 a 0,1 ms per fotogramma.
 - **Impostazioni** come lista lazy, e lettura dello stato dei link fuori dal thread UI: il primo
   fotogramma passa da 57–73 ms a 20–22 ms.
@@ -252,9 +279,9 @@ background, di solito con il telefono inattivo e in carica. Per farlo subito:
 `adb shell cmd package compile -f -m speed-profile com.mauztube`.
 
 ### Logo
-Logo originale (`docs/logo.svg`, `app/src/main/res/drawable/ic_logo.xml`): un "play" con una
-tacca a sinistra su un riquadro con sfumatura rosso→arancio. Richiama un lettore video ma non
-usa il marchio di YouTube, quindi è distribuibile liberamente insieme al progetto. Varianti:
+Logo originale (`docs/logo.svg`, `app/src/main/res/drawable/ic_logo.xml`): un cerchio cremisi
+con un anello di avanzamento aperto e un "play" al centro. Nessun rettangolo arrotondato né
+forme o colori del marchio di YouTube, quindi è distribuibile liberamente insieme al progetto. Varianti:
 icona adattiva (Android 8+), monocromatica per le icone a tema (Android 13+), riquadro per
 Android 7, icona piccola delle notifiche.
 
@@ -375,7 +402,7 @@ applicable law (such as private copying where permitted). **Do not use it to inf
 copyright.** The authors do not condone piracy and are not responsible for any misuse.
 
 ### Google account
-Signing in is optional. Account cookies are stored only on your device and are sent only to
+Signing in is optional. Comments are posted only when you explicitly send them. Account cookies are stored only on your device and are sent only to
 YouTube/Google to load your recommendations, subscriptions, history and playlists. Using
 an account with an unofficial client may lead to restrictions imposed by Google; sign in
 at your own risk.
