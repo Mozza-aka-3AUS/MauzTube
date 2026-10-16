@@ -243,6 +243,7 @@ class YouTubeRepository @Inject constructor(
             viewCount = info.viewCount,
             likeCount = info.likeCount,
             textualUploadDate = info.textualUploadDate,
+            uploadedAtMillis = runCatching { info.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() }.getOrNull(),
             isLive = info.streamType == StreamType.LIVE_STREAM ||
                 info.streamType == StreamType.AUDIO_LIVE_STREAM,
             streams = PlayableStreams(

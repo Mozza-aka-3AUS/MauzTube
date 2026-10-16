@@ -220,7 +220,7 @@ fun Avatar(url: String?, name: String, sizeDp: Int) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            name.trim().take(1).uppercase(),
+            name.trim().trimStart('@').take(1).uppercase(),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
@@ -373,7 +373,8 @@ fun ContentList(
         if (nearEnd && state.canLoadMore && !state.loading && state.error == null) onLoadMore()
     }
 
-    LazyColumn(modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 16.dp)) {
+    // I risultati compaiono in dissolvenza al posto dello scheletro di caricamento.
+    LazyColumn(modifier.fillMaxSize().appearIn(), state = listState, contentPadding = PaddingValues(bottom = 16.dp)) {
         header?.invoke(this)
         items(state.items, key = { it.url }, contentType = { if (it is VideoItem) 0 else 1 }) { item ->
             when (item) {

@@ -68,6 +68,9 @@ data class AppSettings(
     val backgroundPlayback: Boolean = true,
     val autoPip: Boolean = false,
     val showDislikes: Boolean = true,
+    /** A fine video parte da solo il primo consigliato (disattivata di default). */
+    val autoplayNext: Boolean = false,
+    val saveSearchHistory: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_SPONSOR_SERVER = "https://sponsor.ajay.app"
@@ -109,6 +112,8 @@ class SettingsRepository @Inject constructor(
         val ONBOARDING_DONE = booleanPreferencesKey("onboarding_done")
         val AUTO_PIP = booleanPreferencesKey("auto_pip")
         val SHOW_DISLIKES = booleanPreferencesKey("show_dislikes")
+        val AUTOPLAY = booleanPreferencesKey("autoplay_next")
+        val SEARCH_HISTORY = booleanPreferencesKey("save_search_history")
         val SUBS_MERGED = booleanPreferencesKey("subscriptions_merged")
     }
 
@@ -132,6 +137,8 @@ class SettingsRepository @Inject constructor(
             backgroundPlayback = p[Keys.BACKGROUND] ?: d.backgroundPlayback,
             autoPip = p[Keys.AUTO_PIP] ?: d.autoPip,
             showDislikes = p[Keys.SHOW_DISLIKES] ?: d.showDislikes,
+            autoplayNext = p[Keys.AUTOPLAY] ?: d.autoplayNext,
+            saveSearchHistory = p[Keys.SEARCH_HISTORY] ?: d.saveSearchHistory,
         )
     }.distinctUntilChanged()
 
@@ -166,6 +173,8 @@ class SettingsRepository @Inject constructor(
     suspend fun setBackgroundPlayback(v: Boolean) = edit { it[Keys.BACKGROUND] = v }
     suspend fun setAutoPip(v: Boolean) = edit { it[Keys.AUTO_PIP] = v }
     suspend fun setShowDislikes(v: Boolean) = edit { it[Keys.SHOW_DISLIKES] = v }
+    suspend fun setAutoplayNext(v: Boolean) = edit { it[Keys.AUTOPLAY] = v }
+    suspend fun setSaveSearchHistory(v: Boolean) = edit { it[Keys.SEARCH_HISTORY] = v }
     suspend fun setAggressiveShorts(v: Boolean) = edit { it[Keys.AGGRESSIVE_SHORTS] = v }
     suspend fun setSubtitlesAuto(v: Boolean) = edit { it[Keys.SUBS_AUTO] = v }
     suspend fun setReportWatchHistory(v: Boolean) = edit { it[Keys.REPORT_HISTORY] = v }

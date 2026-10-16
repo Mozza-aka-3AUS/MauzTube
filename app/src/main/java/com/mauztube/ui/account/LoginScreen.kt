@@ -84,7 +84,7 @@ fun LoginScreen(onDone: () -> Unit, vm: LoginViewModel = hiltViewModel()) {
                                     if (url.contains("youtube.com") && !url.contains("accounts.google")) {
                                         CookieManager.getInstance().flush()
                                         vm.account.refresh()
-                                        if (vm.account.loggedIn.value) onDone()
+                                        if (vm.account.hasSession.value) onDone()
                                     }
                                 }
                             }

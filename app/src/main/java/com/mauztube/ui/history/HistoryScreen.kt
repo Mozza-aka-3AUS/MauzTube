@@ -18,6 +18,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,6 +81,7 @@ class HistoryViewModel @Inject constructor(
 @Composable
 fun HistoryScreen(
     onVideo: (String) -> Unit,
+    onMyComments: () -> Unit,
     modifier: Modifier = Modifier,
     vm: HistoryViewModel = hiltViewModel(),
 ) {
@@ -94,6 +98,7 @@ fun HistoryScreen(
         ) {
             if (state.items.isNotEmpty()) {
                 LazyColumn(Modifier.fillMaxSize()) {
+                    item { MyCommentsCard(onMyComments) }
                     item { AssistChip(onClick = {}, label = { Text(tr("Google account history", "Cronologia dell'account Google")) }, modifier = Modifier.padding(horizontal = 12.dp)) }
                     items(state.items, key = { it.id }) { v ->
                         val p = progress[v.id]
@@ -126,8 +131,12 @@ fun HistoryScreen(
     val list = local
     when {
         list == null -> SkeletonList(modifier)
-        list.isEmpty() -> MessageView(tr("Videos you watch will appear here.", "I video che guardi compariranno qui."), modifier, title = tr("History is empty", "Cronologia vuota"))
+        list.isEmpty() -> Column(modifier.fillMaxSize()) {
+            MyCommentsCard(onMyComments)
+            MessageView(tr("Videos you watch will appear here.", "I video che guardi compariranno qui."), title = tr("History is empty", "Cronologia vuota"))
+        }
         else -> Column(modifier.fillMaxSize()) {
+            MyCommentsCard(onMyComments)
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -188,3 +197,25 @@ private fun PlaybackStateEntity.toVideoItem() = VideoItem(
     uploadedAtMillis = null,
     isLive = false,
 )
+
+/** Riquadro in cima alla cronologia: apre "I tuoi commenti". */
+@Composable
+private fun MyCommentsCard(onClick: () -> Unit) {
+    androidx.compose.foundation.layout.Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.Icon(com.mauztube.ui.theme.AppIcons.Comment, null, tint = MaterialTheme.colorScheme.primary)
+        androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(tr("Your comments", "I tuoi commenti"), style = MaterialTheme.typography.titleSmall)
+            Text(
+                tr("Comments you've written, with their videos", "I commenti che hai scritto, con i relativi video"),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}

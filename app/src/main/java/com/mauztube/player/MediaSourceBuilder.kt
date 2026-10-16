@@ -201,17 +201,33 @@ class MediaSourceBuilder @Inject constructor(
     private val subtitleParsers = DefaultSubtitleParserFactory()
 
     /**
-     * Buffer d'avvio ridotto: la riproduzione parte con 1 s di dati invece dei 2,5 s di
-     * default; dopo uno stallo (es. seek fuori buffer per uno skip) bastano 1,5 s.
+     * Buffer: avvio rapido (1,5 s di dati invece dei 2,5 s di default) ma riserva ampia
+     * (30–50 s, come il default di ExoPlayer) per assorbire i cali di rete senza fermarsi.
+     * Dopo un eventuale blocco si riparte con 2,5 s, così non si ferma di nuovo subito dopo.
      */
     fun loadControl(): LoadControl = DefaultLoadControl.Builder()
         .setBufferDurationsMs(
-            /* minBufferMs = */ 15_000,
-            /* maxBufferMs = */ 40_000,
-            /* bufferForPlaybackMs = */ 1_000,
-            /* bufferForPlaybackAfterRebufferMs = */ 1_500,
+            /* minBufferMs = */ 30_000,
+            /* maxBufferMs = */ 50_000,
+            /* bufferForPlaybackMs = */ 1_500,
+            /* bufferForPlaybackAfterRebufferMs = */ 2_500,
         )
         .build()
+
+    /**
+     * Qualità adattiva prudente: sale di qualità solo con margine di banda (65% della stima),
+     * riducendo i blocchi su reti mobili che oscillano.
+     */
+    fun trackSelector(context: Context): androidx.media3.exoplayer.trackselection.DefaultTrackSelector =
+        androidx.media3.exoplayer.trackselection.DefaultTrackSelector(
+            context,
+            androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory(
+                /* minDurationForQualityIncreaseMs = */ 10_000,
+                /* maxDurationForQualityDecreaseMs = */ 25_000,
+                /* minDurationToRetainAfterDiscardMs = */ 25_000,
+                /* bandwidthFraction = */ 0.65f,
+            ),
+        )
 
     /** Altezza massima ≤ maxHeight; a parità preferisce H.264 > VP9 > AV1 (compatibilità HW). */
     private fun pickVideo(options: List<StreamOption>, maxHeight: Int): StreamOption? {

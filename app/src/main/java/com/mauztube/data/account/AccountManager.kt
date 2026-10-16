@@ -25,13 +25,31 @@ class AccountManager @Inject constructor() {
             .getOrNull()
     }
 
+    /** C'è una sessione Google salvata sul dispositivo. */
+    private val _hasSession = MutableStateFlow(false)
+    val hasSession: StateFlow<Boolean> = _hasSession
+
+    /**
+     * MODALITÀ ANONIMO (solo per la sessione corrente): l'account non viene usato e nulla
+     * viene registrato (cronologia, posizioni, ricerche, ping a YouTube).
+     */
+    private val _incognito = MutableStateFlow(false)
+    val incognito: StateFlow<Boolean> = _incognito
+
+    /** Account utilizzabile: sessione presente e modalità anonimo spenta. */
     private val _loggedIn = MutableStateFlow(false)
     val loggedIn: StateFlow<Boolean> = _loggedIn
 
     init { refresh() }
 
     fun refresh() {
-        _loggedIn.value = cookieMap()[SAPISID] != null || cookieMap()[SAPISID_3P] != null
+        _hasSession.value = cookieMap()[SAPISID] != null || cookieMap()[SAPISID_3P] != null
+        _loggedIn.value = _hasSession.value && !_incognito.value
+    }
+
+    fun setIncognito(enabled: Boolean) {
+        _incognito.value = enabled
+        _loggedIn.value = _hasSession.value && !enabled
     }
 
     fun cookieHeader(): String? = cookies?.getCookie(YT_URL)?.takeIf { it.isNotBlank() }
@@ -45,6 +63,7 @@ class AccountManager @Inject constructor() {
 
     /** Header di autenticazione InnerTube, o mappa vuota se non loggato. */
     fun authHeaders(origin: String = ORIGIN): Map<String, String> {
+        if (_incognito.value) return emptyMap()
         val map = cookieMap()
         val cookie = cookieHeader() ?: return emptyMap()
         val ts = System.currentTimeMillis() / 1000
@@ -75,12 +94,13 @@ class AccountManager @Inject constructor() {
             .forEach { cm.setCookie(YT_URL, "$it; Domain=.youtube.com; Path=/; Secure") }
         cm.flush()
         refresh()
-        return _loggedIn.value
+        return _hasSession.value
     }
 
     fun logout() {
         cookies?.removeAllCookies(null)
         cookies?.flush()
+        _hasSession.value = false
         _loggedIn.value = false
     }
 

@@ -17,14 +17,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mauztube.data.prefs.ThemeMode
 
-/** Rosso del marchio, usato anche per la barra di avanzamento e i badge LIVE. */
-val BrandRed = Color(0xFFE62117)
+/** Rosso cremisi del marchio MauzTube (barra di avanzamento, badge LIVE). */
+val BrandRed = Color(0xFFE11D48)
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFFC4170F),
+    primary = Color(0xFFBE123C),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFFFDAD5),
-    onPrimaryContainer = Color(0xFF410001),
+    primaryContainer = Color(0xFFFFE4E6),
+    onPrimaryContainer = Color(0xFF4C0519),
     secondary = Color(0xFF5E5E62),
     onSecondary = Color.White,
     secondaryContainer = Color(0xFFE6E6EA),
@@ -43,10 +43,10 @@ private val LightColors = lightColorScheme(
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFFF8A80),
-    onPrimary = Color(0xFF5F1412),
-    primaryContainer = Color(0xFF8C1D18),
-    onPrimaryContainer = Color(0xFFFFDAD5),
+    primary = Color(0xFFFB7185),
+    onPrimary = Color(0xFF4C0519),
+    primaryContainer = Color(0xFF881337),
+    onPrimaryContainer = Color(0xFFFFE4E6),
     secondary = Color(0xFFC7C6CA),
     onSecondary = Color(0xFF303034),
     secondaryContainer = Color(0xFF3A3A3E),

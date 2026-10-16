@@ -1,5 +1,6 @@
 package com.mauztube.ui.player
 
+import com.mauztube.ui.components.popOnChange
 import com.mauztube.util.tr
 
 import android.app.Activity
@@ -108,6 +109,8 @@ fun PlayerScreen(
     vm: PlayerViewModel = hiltViewModel(),
 ) {
     val queue by vm.queue.collectAsStateWithLifecycle()
+    val autoplay by vm.autoplay.collectAsStateWithLifecycle()
+    val loop by vm.loop.collectAsStateWithLifecycle()
     val nowPlaying by vm.nowPlaying.collectAsStateWithLifecycle()
     val fullscreen by vm.fullscreen.collectAsStateWithLifecycle()
     val subscribed by vm.subscribed.collectAsStateWithLifecycle()
@@ -127,13 +130,16 @@ fun PlayerScreen(
     }
 
     FullscreenEffect(fullscreen)
-    // Lasciando la schermata del video si esce sempre dallo schermo intero.
-    DisposableEffect(Unit) { onDispose { vm.setFullscreen(false) } }
     val rating by vm.rating.collectAsStateWithLifecycle()
     val votes by vm.votes.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
     var downloadOpen by remember { mutableStateOf(false) }
+    var commentsOpen by remember { mutableStateOf(false) }
+    val commentsVm: com.mauztube.ui.comments.CommentsViewModel = hiltViewModel()
     val readyDetails = (nowPlaying?.takeIf { it.videoId == vm.videoId }?.state as? PlayerUiState.Ready)?.details
+    if (commentsOpen && readyDetails != null) {
+        com.mauztube.ui.comments.CommentsSheet(commentsVm, readyDetails.title, readyDetails.thumbnailUrl, onDismiss = { commentsOpen = false })
+    }
     if (downloadOpen && readyDetails != null) {
         com.mauztube.ui.downloads.DownloadSheet(readyDetails, onDownload = vm::download, onDismiss = { downloadOpen = false })
     }
@@ -173,6 +179,12 @@ fun PlayerScreen(
                 onOpenQueue = onOpenQueue,
                 storyboard = ready?.details?.storyboard,
                 onPip = { (activity as? com.mauztube.MainActivity)?.enterPip() },
+                autoplay = autoplay,
+                loop = loop,
+                onToggleAutoplay = vm::toggleAutoplay,
+                onToggleLoop = vm::toggleLoop,
+                related = ready?.details?.related.orEmpty(),
+                onOpenRelated = { v -> VideoPreviews.put(v); onVideo(v.id) },
                 modifier = if (fullscreen) Modifier.fillMaxSize()
                 else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
             )
@@ -199,6 +211,7 @@ fun PlayerScreen(
                     onRate = vm::rate,
                     onPip = { (activity as? com.mauztube.MainActivity)?.enterPip() },
                     onDownload = { downloadOpen = true },
+                    commentsSlot = { com.mauztube.ui.comments.CommentsPreview(commentsVm, onOpen = { commentsOpen = true }) },
                     onShare = { fromNow ->
                         Share.video(
                             context, vm.shareTitle(), vm.videoId,
@@ -258,6 +271,7 @@ private fun Details(
     onRate: (Int) -> Unit,
     onPip: () -> Unit,
     onDownload: () -> Unit,
+    commentsSlot: @Composable () -> Unit,
     onShare: (fromCurrentTime: Boolean) -> Unit,
     onVideo: (String) -> Unit,
     onChannel: (String) -> Unit,
@@ -271,7 +285,7 @@ private fun Details(
             Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                 Text(d.title, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    listOf(Format.views(d.viewCount), d.textualUploadDate.orEmpty())
+                    listOf(Format.views(d.viewCount), d.uploadedAtMillis?.let(Format::date) ?: d.textualUploadDate.orEmpty())
                         .filter { it.isNotBlank() }.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -339,6 +353,7 @@ private fun Details(
                 }
             }
         }
+        if (!d.isLive) item(key = "comments") { commentsSlot() }
         if (d.related.isNotEmpty()) {
             item(key = "next-title") {
                 Text(
@@ -511,7 +526,7 @@ private fun RatingPill(rating: Int, likes: Long, dislikes: Long, onRate: (Int) -
                 if (rating == 1) AppIcons.ThumbUp else AppIcons.ThumbUpOutline,
                 tr("Like", "Mi piace"),
                 tint = if (rating == 1) active else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.popOnChange(rating == 1).size(18.dp),
             )
             if (likes >= 0) {
                 Spacer(Modifier.width(6.dp))
@@ -527,7 +542,7 @@ private fun RatingPill(rating: Int, likes: Long, dislikes: Long, onRate: (Int) -
                 if (rating == -1) AppIcons.ThumbDown else AppIcons.ThumbDownOutline,
                 tr("Dislike", "Non mi piace"),
                 tint = if (rating == -1) active else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.popOnChange(rating == -1).size(18.dp),
             )
             if (dislikes >= 0) {
                 Spacer(Modifier.width(6.dp))

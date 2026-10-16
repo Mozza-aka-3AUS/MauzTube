@@ -1,11 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
-  <!-- Logo MauzTube — originale, utilizzabile liberamente nel progetto -->
+  <!-- MauzTube logo: crimson circle, open progress ring with playhead, rounded play. Original artwork. -->
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#E8202A"/>
-      <stop offset="1" stop-color="#FF7A1A"/>
+    <linearGradient id="g" x1="18" y1="10" x2="90" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E11D48"/>
+      <stop offset="1" stop-color="#9F1239"/>
     </linearGradient>
   </defs>
-  <rect x="6" y="6" width="96" height="96" rx="24" fill="url(#g)"/>
-  <path d="M40,30 L80,54 L40,78 L50,54 Z" fill="#fff" stroke="#fff" stroke-width="8" stroke-linejoin="round"/>
+  <circle cx="54" cy="54" r="50" fill="url(#g)"/>
+  <g transform="translate(54 54) scale(1.32) translate(-54 -54)">
+    <path d="M78.43,45.11 A26,26 0 1,1 58.51,28.39" fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/>
+    <circle cx="70.71" cy="34.08" r="4.6" fill="#fff"/>
+    <path d="M48.5,43 L64.5,54 L48.5,65 Z" fill="#fff" stroke="#fff" stroke-width="4.5" stroke-linejoin="round"/>
+  </g>
 </svg>

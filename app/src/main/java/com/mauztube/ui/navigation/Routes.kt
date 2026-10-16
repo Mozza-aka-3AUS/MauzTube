@@ -6,6 +6,8 @@ import kotlinx.serialization.Serializable
 @Serializable data object SubscriptionsRoute
 @Serializable data object PlaylistsRoute
 @Serializable data object DownloadsRoute
+@Serializable data object MyCommentsRoute
+@Serializable data object AccountCommentsRoute
 @Serializable data class PlaylistRoute(val kind: String, val id: String, val title: String)
 @Serializable data object HistoryRoute
 @Serializable data object SettingsRoute
