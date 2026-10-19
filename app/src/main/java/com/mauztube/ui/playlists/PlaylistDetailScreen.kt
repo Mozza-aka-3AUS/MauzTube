@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -99,7 +100,7 @@ class PlaylistDetailViewModel @Inject constructor(
     fun playAll() = playback.enqueueAll(currentItems(), playFirst = true)
     fun queueAll() = playback.enqueueAll(currentItems(), playFirst = false)
 
-    fun remove(video: VideoItem) = viewModelScope.launch {
+    fun remove(video: VideoItem) = viewModelScope.launch(com.mauztube.util.SafeHandler) {
         when (route.kind) {
             KIND_WATCH_LATER -> library.toggleWatchLater(video)
             KIND_LOCAL -> playlists.remove(route.id.toLong(), video.id)
@@ -107,7 +108,7 @@ class PlaylistDetailViewModel @Inject constructor(
         }
     }
 
-    fun deletePlaylist() = viewModelScope.launch { if (route.kind == KIND_LOCAL) playlists.delete(route.id.toLong()) }
+    fun deletePlaylist() = viewModelScope.launch(com.mauztube.util.SafeHandler) { if (route.kind == KIND_LOCAL) playlists.delete(route.id.toLong()) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -167,7 +168,8 @@ fun PlaylistDetailScreen(
             )
             else -> LazyColumn(Modifier.padding(padding).fillMaxSize()) {
                 item { actionsRow() }
-                items(list, key = { it.id }) { v ->
+                // Una playlist può contenere lo stesso video più volte: chiave unica per posizione.
+                itemsIndexed(list, key = { i, v -> "${v.id}#$i" }) { _, v ->
                     VideoCard(v, onClick = { VideoPreviews.put(v); onVideo(v.id) })
                     Row(Modifier.padding(horizontal = 12.dp)) {
                         TextButton(onClick = { vm.remove(v) }) { Text(tr("Remove from playlist", "Rimuovi dalla playlist")) }

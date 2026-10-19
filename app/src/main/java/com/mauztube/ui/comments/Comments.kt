@@ -110,11 +110,11 @@ class CommentsViewModel @Inject constructor(
 
     private fun load() {
         _ui.value = CommentsUi(loading = true)
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             runCatching { repo.comments(videoId) }
                 .onSuccess { p ->
                     next = p.first.loadNext
-                    _ui.value = CommentsUi(disabled = p.disabled, count = p.count, items = p.first.items, canLoadMore = next != null)
+                    _ui.value = CommentsUi(disabled = p.disabled, count = p.count, items = p.first.items.distinctBy { it.id }, canLoadMore = next != null)
                 }
                 .onFailure { _ui.value = CommentsUi(error = it.message ?: it.javaClass.simpleName) }
         }
@@ -124,7 +124,7 @@ class CommentsViewModel @Inject constructor(
         val loader = next ?: return
         if (_ui.value.loading) return
         _ui.value = _ui.value.copy(loading = true)
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             runCatching { loader() }
                 .onSuccess { p ->
                     next = p.loadNext
@@ -138,7 +138,7 @@ class CommentsViewModel @Inject constructor(
         if (replies.containsKey(c.id)) { replies.remove(c.id); return }
         val loader = c.loadReplies ?: return
         repliesLoading[c.id] = true
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             runCatching { loader() }.onSuccess { replies[c.id] = it.items }
             repliesLoading.remove(c.id)
         }
@@ -147,7 +147,7 @@ class CommentsViewModel @Inject constructor(
     fun post(title: String, thumb: String?, text: String, onResult: (String?) -> Unit) {
         if (text.isBlank() || posting) return
         posting = true
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             val result = runCatching { repo.post(videoId, title, thumb, text.trim()) }
             posting = false
             onResult(result.exceptionOrNull()?.message)

@@ -67,6 +67,10 @@ fun MiniPlayer(
     val dy = remember(np.videoId) { Animatable(0f) }
     val threshold = with(LocalDensity.current) { 90.dp.toPx() }
     val cover = (np.state as? PlayerUiState.Ready)?.details?.thumbnailUrl ?: np.preview?.thumbnailUrl
+    // Larghezza proporzionale allo schermo: ~45% su un telefono, mai enorme sui tablet e mai
+    // così grande da coprire metà dei contenuti sugli schermi piccoli.
+    val screenW = com.mauztube.ui.components.windowSize().widthDp
+    val width = (screenW * 0.45f).coerceIn(150f, 260f).dp
     // Entrata: sale dal basso ingrandendosi leggermente.
     val enter = remember(np.videoId) { Animatable(0f) }
     LaunchedEffect(np.videoId) { enter.animateTo(1f, tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
@@ -84,7 +88,7 @@ fun MiniPlayer(
                 // Più lo si trascina verso l'uscita, più diventa trasparente.
                 alpha = e * (1f - (max(dx.value, dy.value) / (threshold * 2)).coerceIn(0f, 0.7f))
             }
-            .width(208.dp)
+            .width(width)
             .aspectRatio(16f / 9f)
             .shadow(12.dp, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))

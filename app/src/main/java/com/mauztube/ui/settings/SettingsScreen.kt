@@ -63,7 +63,7 @@ class SettingsViewModel @Inject constructor(
     val account: AccountManager,
     private val searchHistory: com.mauztube.data.repository.SearchHistoryRepository,
 ) : ViewModel() {
-    fun clearSearchHistory() = viewModelScope.launch { searchHistory.clear() }
+    fun clearSearchHistory() = viewModelScope.launch(com.mauztube.util.SafeHandler) { searchHistory.clear() }
 
     /**
      * Stato mostrato: parte dal valore già in memoria e viene aggiornato SUBITO al tocco
@@ -73,23 +73,23 @@ class SettingsViewModel @Inject constructor(
     val settings: StateFlow<AppSettings?> = _settings
 
     init {
-        viewModelScope.launch { repo.settings.collect { _settings.value = it } }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { repo.settings.collect { _settings.value = it } }
     }
 
     /** Applica [local] all'istante e poi persiste con [persist]. */
     fun set(local: AppSettings.() -> AppSettings, persist: suspend SettingsRepository.() -> Unit) {
         _settings.value = _settings.value?.local()
-        viewModelScope.launch { repo.persist() }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { repo.persist() }
     }
 
     /** All'uscita si azzera la fusione iscrizioni: un nuovo account riceverà quelle locali. */
     fun logout() {
         account.logout()
-        viewModelScope.launch { repo.setSubscriptionsMerged(false) }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { repo.setSubscriptionsMerged(false) }
     }
 
     fun update(block: suspend SettingsRepository.() -> Unit) {
-        viewModelScope.launch { repo.block() }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { repo.block() }
     }
 }
 
@@ -342,6 +342,7 @@ fun SettingsScreen(onLogin: () -> Unit, modifier: Modifier = Modifier, vm: Setti
                 s.aggressiveShortsFilter,
             ) { v -> vm.set({ copy(aggressiveShortsFilter = v) }) { setAggressiveShorts(v) } }
         }
+        item(key = "diag") { ErrorReportSection() }
     }
 
     if (cookieDialog) {
@@ -380,6 +381,42 @@ fun SettingsScreen(onLogin: () -> Unit, modifier: Modifier = Modifier, vm: Setti
             },
             dismissButton = { TextButton(onClick = { cookieDialog = false }) { Text(tr("Cancel", "Annulla")) } },
         )
+    }
+}
+
+/**
+ * Registro errori: visibile solo se c'è qualcosa da segnalare. Il file resta sul telefono e
+ * viene condiviso solo se l'utente lo sceglie.
+ */
+@Composable
+private fun ErrorReportSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var log by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        log = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.mauztube.util.CrashLog.read() }
+    }
+    val text = log ?: return
+    Column {
+        HorizontalDivider(Modifier.padding(top = 4.dp))
+        Section(tr("Error report", "Segnalazione errori"))
+        Text(
+            tr(
+                "MauzTube recorded ${text.split("=== ").size - 1} errors. The report stays on this phone: you can share it to help fix them.",
+                "MauzTube ha registrato ${text.split("=== ").size - 1} errori. Il rapporto resta su questo telefono: puoi condividerlo per aiutare a correggerli.",
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
+        Row(Modifier.padding(horizontal = 8.dp)) {
+            TextButton(onClick = {
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                    .setType("text/plain")
+                    .putExtra(android.content.Intent.EXTRA_SUBJECT, "MauzTube error report")
+                    .putExtra(android.content.Intent.EXTRA_TEXT, text.takeLast(60_000))
+                context.startActivity(android.content.Intent.createChooser(send, null))
+            }) { Text(tr("Share report", "Condividi rapporto")) }
+            TextButton(onClick = { com.mauztube.util.CrashLog.clear(); log = null }) { Text(tr("Delete", "Elimina")) }
+        }
     }
 }
 

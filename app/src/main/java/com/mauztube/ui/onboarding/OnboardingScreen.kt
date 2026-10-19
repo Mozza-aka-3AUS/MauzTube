@@ -15,6 +15,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
@@ -47,18 +51,27 @@ import com.mauztube.ui.theme.BrandRed
 fun OnboardingScreen(onGoogle: () -> Unit, onLocal: () -> Unit) {
     // Surface: imposta il colore del testo del tema (fuori da una Surface sarebbe nero).
     androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
+    // Qualsiasi schermo: il contenuto è centrato se ci sta, altrimenti scorre. Sugli schermi
+    // bassi (o con caratteri grandi) gli spazi si riducono; sui tablet la larghezza è limitata.
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+    val compact = maxHeight < 700.dp
+    val gap = if (compact) 16.dp else 28.dp
     Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding().padding(24.dp),
+        Modifier.verticalScroll(rememberScrollState()).heightIn(min = maxHeight).widthIn(max = 520.dp)
+            .padding(horizontal = 24.dp, vertical = if (compact) 12.dp else 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        LanguageSelector(Modifier.padding(bottom = 28.dp))
+        LanguageSelector(Modifier.padding(bottom = gap))
         androidx.compose.foundation.Image(
             painter = androidx.compose.ui.res.painterResource(com.mauztube.R.drawable.ic_logo),
             contentDescription = null,
-            modifier = Modifier.size(80.dp),
+            modifier = Modifier.size(if (compact) 56.dp else 80.dp),
         )
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(if (compact) 12.dp else 20.dp))
         Text(tr("Welcome to MauzTube", "Benvenuto in MauzTube"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(
             tr("No ads, no Shorts, with SponsorBlock. How do you want to use it?", "Senza pubblicità, senza Shorts, con SponsorBlock. Come vuoi usarlo?"),
@@ -67,7 +80,7 @@ fun OnboardingScreen(onGoogle: () -> Unit, onLocal: () -> Unit) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
         )
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(gap))
         Choice(
             icon = Icons.Default.AccountCircle,
             title = tr("Connect your Google account", "Collega l'account Google"),
@@ -79,7 +92,7 @@ fun OnboardingScreen(onGoogle: () -> Unit, onLocal: () -> Unit) {
             title = tr("Stay local", "Resta in locale"),
             text = tr("No account: subscriptions, history and recommendations stay on this phone only.", "Nessun account: iscrizioni, cronologia e consigli restano solo su questo telefono."),
         )
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(gap))
         Button(onClick = onGoogle, modifier = Modifier.fillMaxWidth()) { Text(tr("Sign in with Google", "Accedi con Google")) }
         OutlinedButton(onClick = onLocal, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(tr("Continue without an account", "Continua senza account")) }
         val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -97,7 +110,9 @@ fun OnboardingScreen(onGoogle: () -> Unit, onLocal: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 16.dp),
+            textAlign = TextAlign.Center,
         )
+    }
     }
 }
 }

@@ -72,7 +72,7 @@ class MyCommentsViewModel @Inject constructor(
 ) : ViewModel() {
     val posted: StateFlow<List<MyCommentEntity>?> = repo.posted
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-    fun delete(id: Long) = viewModelScope.launch { repo.deletePostedRecord(id) }
+    fun delete(id: Long) = viewModelScope.launch(com.mauztube.util.SafeHandler) { repo.deletePostedRecord(id) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

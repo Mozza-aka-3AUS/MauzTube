@@ -55,12 +55,30 @@ class MainActivity : ComponentActivity() {
     // Risorse di sistema e formati nella lingua scelta nell'app.
     override fun attachBaseContext(newBase: Context) {
         I18n.init(newBase)
-        super.attachBaseContext(I18n.wrap(newBase))
+        super.attachBaseContext(newBase)
+        // Solo la lingua viene sovrascritta: il resto della configurazione (rotazione,
+        // dimensioni, densità) continua a seguire il dispositivo. Con un contesto creato da
+        // una copia completa della configurazione, dopo una rotazione l'interfaccia credeva
+        // di essere ancora in verticale.
+        applyOverrideConfiguration(android.content.res.Configuration().apply { setLocale(I18n.locale) })
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            if (!com.mauztube.util.CrashLog.consumeCrashFlag()) return@launch
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    com.mauztube.util.tr(
+                        "MauzTube closed because of an error. You can share the report from Settings.",
+                        "MauzTube si è chiuso per un errore. Puoi condividere il rapporto dalle Impostazioni.",
+                    ),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
 
         if (savedInstanceState == null) {
             val link = LinkParser.fromIntent(intent)

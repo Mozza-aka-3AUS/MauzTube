@@ -81,7 +81,7 @@ class HomeViewModel @Inject constructor(
     val feed = PagedListController<VideoItem>(viewModelScope) { load() }
 
     init {
-        viewModelScope.launch { loggedIn.collect { refresh() } }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { loggedIn.collect { refresh() } }
     }
 
     private suspend fun load(): Paged<VideoItem> {
@@ -123,7 +123,7 @@ class HomeViewModel @Inject constructor(
     fun refresh() {
         seed++
         feed.refresh()
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             val first = feed.state.map { it.items }.filter { it.isNotEmpty() }.distinctUntilChanged().first()
             // Si ricordano i primi video (quelli effettivamente visti scorrendo poco).
             shownHistory.addLast(first.take(SHOWN_WINDOW).map { it.id }.toSet())
@@ -131,7 +131,7 @@ class HomeViewModel @Inject constructor(
             youtube.prefetch(first.map { it.id })
         }
         if (!account.loggedIn.value) {
-            viewModelScope.launch {
+            viewModelScope.launch(com.mauztube.util.SafeHandler) {
                 val changed = runCatching { local.refreshSources() }.getOrDefault(false)
                 // Se la home era vuota (cache fredda) mostra subito i nuovi consigli; altrimenti
                 // non rimescola la lista sotto le dita: verranno usati al prossimo aggiornamento.

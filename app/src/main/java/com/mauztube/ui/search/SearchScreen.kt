@@ -70,7 +70,7 @@ class SearchViewModel @Inject constructor(
     val recent: StateFlow<List<String>> = history.recent
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun removeRecent(q: String) = viewModelScope.launch { history.delete(q) }
+    fun removeRecent(q: String) = viewModelScope.launch(com.mauztube.util.SafeHandler) { history.delete(q) }
 
 
     val query: StateFlow<String> = savedState.getStateFlow("query", "")
@@ -86,7 +86,7 @@ class SearchViewModel @Inject constructor(
     fun search() {
         val q = query.value.trim()
         if (q.isEmpty()) return
-        viewModelScope.launch { history.record(q) }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { history.record(q) }
         _controller.value = PagedListController(viewModelScope) { repo.search(q) }.also { it.refresh() }
     }
 }

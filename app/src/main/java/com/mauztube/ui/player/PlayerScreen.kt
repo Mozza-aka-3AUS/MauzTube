@@ -1,5 +1,6 @@
 package com.mauztube.ui.player
 
+import androidx.compose.animation.togetherWith
 import com.mauztube.ui.components.popOnChange
 import com.mauztube.util.tr
 
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -164,7 +166,11 @@ fun PlayerScreen(
         containerColor = if (fullscreen) Color.Black else MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
+        // Schermo largo e basso (telefono in orizzontale, tablet): video a sinistra e dettagli
+        // a destra, invece di un video più alto dello schermo.
+        val window = com.mauztube.ui.components.windowSize()
+        val sideBySide = !fullscreen && window.landscape && window.wide
+        val playerView: @Composable (Modifier) -> Unit = { playerModifier ->
             PlayerWithControls(
                 manager = vm.manager,
                 segments = ready?.segments.orEmpty(),
@@ -185,11 +191,10 @@ fun PlayerScreen(
                 onToggleLoop = vm::toggleLoop,
                 related = ready?.details?.related.orEmpty(),
                 onOpenRelated = { v -> VideoPreviews.put(v); onVideo(v.id) },
-                modifier = if (fullscreen) Modifier.fillMaxSize()
-                else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                modifier = playerModifier,
             )
-            if (fullscreen) return@Column
-
+        }
+        val details: @Composable () -> Unit = {
             when (state) {
                 PlayerUiState.Loading -> LoadingPreview(vm)
                 is PlayerUiState.Error -> MessageView(
@@ -222,6 +227,24 @@ fun PlayerScreen(
                     onChannel = onChannel,
                     onSeekTo = { ms -> vm.manager.player.seekTo(ms) },
                 )
+            }
+        }
+        // Un solo punto di composizione per il player: cambiando disposizione (schermo intero,
+        // affiancato) il video non viene ricreato e non lampeggia.
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
+            val playerHeight = maxWidth * 9f / 16f
+            playerView(
+                when {
+                    fullscreen -> Modifier.fillMaxSize()
+                    sideBySide -> Modifier.fillMaxWidth(0.6f).fillMaxHeight()
+                    else -> Modifier.fillMaxWidth().height(playerHeight)
+                }
+            )
+            if (!fullscreen) {
+                Column(
+                    if (sideBySide) Modifier.fillMaxWidth(0.4f).fillMaxHeight().align(Alignment.TopEnd)
+                    else Modifier.fillMaxSize().padding(top = playerHeight)
+                ) { details() }
             }
         }
     }
@@ -363,7 +386,8 @@ private fun Details(
                 )
             }
         }
-        items(d.related, key = { "rel-" + it.id }) { video ->
+        // YouTube a volte ripete un video tra i correlati: chiavi duplicate farebbero chiudere l'app.
+        items(d.related.distinctBy { it.id }, key = { "rel-" + it.id }) { video ->
             VideoCard(video, onClick = { VideoPreviews.put(video); onVideo(video.id) }, showQueueButton = true)
         }
     }
@@ -419,8 +443,32 @@ private fun ChannelBar(
             }
         }
         if (d.uploaderUrl != null) {
-            if (subscribed) FilledTonalButton(onClick = onToggleSubscribe) { Text(tr("Subscribed", "Iscritto")) }
-            else Button(onClick = onToggleSubscribe) { Text(tr("Subscribe", "Iscriviti")) }
+            // Iscriviti ⇄ Iscritto: colore e testo cambiano con una transizione morbida.
+            val container by androidx.compose.animation.animateColorAsState(
+                if (subscribed) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primary,
+                androidx.compose.animation.core.tween(220), label = "subBg",
+            )
+            val content by androidx.compose.animation.animateColorAsState(
+                if (subscribed) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimary,
+                androidx.compose.animation.core.tween(220), label = "subFg",
+            )
+            Button(
+                onClick = onToggleSubscribe,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = container, contentColor = content),
+                modifier = Modifier.popOnChange(subscribed).animateContentSize(),
+            ) {
+                androidx.compose.animation.AnimatedContent(
+                    subscribed,
+                    transitionSpec = {
+                        (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)) +
+                            androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(200)) { it / 2 })
+                            .togetherWith(androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100)))
+                    },
+                    label = "subText",
+                ) { sub ->
+                    Text(if (sub) tr("Subscribed", "Iscritto") else tr("Subscribe", "Iscriviti"), maxLines = 1)
+                }
+            }
         }
     }
 }

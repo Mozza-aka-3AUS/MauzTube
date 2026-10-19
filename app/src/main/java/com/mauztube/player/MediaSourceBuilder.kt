@@ -4,15 +4,10 @@ import android.content.Context
 import android.net.Uri
 import androidx.annotation.OptIn
 import android.util.Log
-import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.dash.manifest.DashManifestParser
-import androidx.media3.extractor.ExtractorsFactory
-import androidx.media3.extractor.text.DefaultSubtitleParserFactory
-import androidx.media3.extractor.text.SubtitleExtractor
 import java.io.ByteArrayInputStream
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
@@ -29,7 +24,6 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.mauztube.data.extractor.NewPipeDownloader
 import com.mauztube.data.model.NoPlayableStreamException
 import com.mauztube.data.model.StreamOption
-import com.mauztube.data.model.SubtitleOption
 import com.mauztube.data.innertube.AuthenticatedStreamFetcher
 import com.mauztube.data.model.VideoDetails
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -50,7 +44,7 @@ import javax.inject.Singleton
 @Singleton
 class MediaSourceBuilder @Inject constructor(
     @ApplicationContext context: Context,
-    okHttpClient: OkHttpClient,
+    @com.mauztube.di.MediaHttp okHttpClient: OkHttpClient,
 ) {
     /**
      * Gli URL googlevideo restituiscono 403 se lo User-Agent non corrisponde al client
@@ -105,9 +99,8 @@ class MediaSourceBuilder @Inject constructor(
             throw NoPlayableStreamException()
         }
 
-        val subtitles = details.subtitles.mapIndexedNotNull { i, sub -> subtitleSource(sub, i) }
-        val source = if (subtitles.isEmpty()) main else MergingMediaSource(main, *subtitles.toTypedArray())
-        return Built(source, preferredMime)
+        // I sottotitoli NON fanno parte della sorgente: vedi SubtitleLoader.
+        return Built(main, preferredMime)
     }
 
     /**
@@ -173,46 +166,26 @@ class MediaSourceBuilder @Inject constructor(
         return ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(item(option.url))
     }
 
-    /** Sottotitoli esterni (TTML di YouTube) convertiti in cue durante l'estrazione. */
-    private fun subtitleSource(sub: SubtitleOption, index: Int): MediaSource? {
-        val format = Format.Builder()
-            .setId("sub-$index")
-            .setSampleMimeType(sub.mimeType)
-            .setLanguage(sub.languageTag)
-            .setLabel(sub.label)
-            .build()
-        if (!subtitleParsers.supportsFormat(format)) return null
-        val extractors = ExtractorsFactory {
-            arrayOf(
-                SubtitleExtractor(
-                    subtitleParsers.create(format),
-                    format.buildUpon()
-                        .setSampleMimeType(MimeTypes.APPLICATION_MEDIA3_CUES)
-                        .setCodecs(format.sampleMimeType)
-                        .setCueReplacementBehavior(subtitleParsers.getCueReplacementBehavior(format))
-                        .build(),
-                )
-            )
-        }
-        return ProgressiveMediaSource.Factory(dataSourceFactory, extractors)
-            .createMediaSource(MediaItem.fromUri(sub.url))
-    }
-
-    private val subtitleParsers = DefaultSubtitleParserFactory()
-
     /**
      * Buffer: avvio rapido (1,5 s di dati invece dei 2,5 s di default) ma riserva ampia
      * (30–50 s, come il default di ExoPlayer) per assorbire i cali di rete senza fermarsi.
      * Dopo un eventuale blocco si riparte con 2,5 s, così non si ferma di nuovo subito dopo.
      */
-    fun loadControl(): LoadControl = DefaultLoadControl.Builder()
-        .setBufferDurationsMs(
-            /* minBufferMs = */ 30_000,
-            /* maxBufferMs = */ 50_000,
-            /* bufferForPlaybackMs = */ 1_500,
-            /* bufferForPlaybackAfterRebufferMs = */ 2_500,
-        )
-        .build()
+    fun loadControl(): LoadControl {
+        val low = com.mauztube.util.DeviceProfile.lowMemory
+        return DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ if (low) 15_000 else 30_000,
+                /* maxBufferMs = */ if (low) 30_000 else 50_000,
+                /* bufferForPlaybackMs = */ 1_500,
+                /* bufferForPlaybackAfterRebufferMs = */ 2_500,
+            )
+            .apply {
+                // Telefoni con poca memoria: tetto di 24 MB al buffer (il default arriva a 130 MB).
+                if (low) setTargetBufferBytes(24 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(true)
+            }
+            .build()
+    }
 
     /**
      * Qualità adattiva prudente: sale di qualità solo con margine di banda (65% della stima),

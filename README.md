@@ -1,381 +1,459 @@
 # MauzTube
 
-<img src="docs/logo.svg" width="96" alt="Logo MauzTube">
+<img src="docs/logo.svg" width="96" alt="MauzTube logo">
 
 Lightweight, ad-free YouTube client for Android with SponsorBlock, no Shorts, background &amp; pop-up playback, downloads (MP4/MP3) and optional Google account sync. Kotlin + Jetpack Compose + Media3, powered by NewPipeExtractor.
 
 > **MauzTube is not affiliated with, endorsed or sponsored by YouTube or Google.**
 > Licensed under the [GNU GPL v3.0](LICENSE). See the [Legal](#legal) section below.
 
-Client YouTube alternativo per Android: niente pubblicità, salto automatico dei segmenti
-sponsorizzati (SponsorBlock), ripresa esatta della riproduzione e Shorts nascosti ovunque.
+**Download:** the latest APK is on the [Releases](../../releases) page (Android 7.0 or later).
 
 Kotlin · Jetpack Compose · Media3/ExoPlayer · NewPipeExtractor · Room · DataStore · Hilt · MVVM
 
-## Architettura
+## Architecture
 
 ```
 UI (Compose)  ──►  ViewModel (StateFlow)  ──►  Repository  ──►  NewPipeExtractor / SponsorBlock REST / Room / DataStore
                          │
-                         └──► ExoPlayer (posseduto da PlayerViewModel, sopravvive alle rotazioni)
+                         └──► PlaybackManager (single ExoPlayer for the whole app, survives rotations)
 ```
 
-| Package | Contenuto |
+| Package | Contents |
 |---|---|
-| `data/extractor` | `NewPipeDownloader`: tutte le richieste HTTP di NewPipeExtractor passano da OkHttp |
-| `data/model` | Modelli di dominio, `ContentMapper` (NewPipe → dominio), `ShortsFilter` |
-| `data/local` | Room: posizioni/cronologia, cache SponsorBlock, iscrizioni, cronologia ricerche, commenti pubblicati |
-| `data/remote` | `SponsorBlockApi` (endpoint hash-prefix) |
-| `data/prefs` | `SettingsRepository` (DataStore): preferenze e sessione attiva |
+| `data/extractor` | `NewPipeDownloader`: every HTTP request made by NewPipeExtractor goes through OkHttp |
+| `data/net` | `CachingDns` and `NetworkWatcher`: resilient networking (see [Network resilience](#network-resilience)) |
+| `data/model` | Domain models, `ContentMapper` (NewPipe → domain), `ShortsFilter` |
+| `data/local` | Room: playback positions/history, SponsorBlock cache, subscriptions, search history, posted comments |
+| `data/remote` | `SponsorBlockApi` (hash-prefix endpoint) |
+| `data/prefs` | `SettingsRepository` (DataStore): preferences and active session |
 | `data/repository` | `YouTubeRepository`, `SponsorBlockRepository`, `PlaybackRepository`, `SubscriptionRepository`, `CommentsRepository`, `SearchHistoryRepository` |
-| `player` | `MediaSourceBuilder` (scelta stream + header per googlevideo), `SponsorSkipper` |
-| `data/account` | `AccountManager`: sessione Google (cookie del WebView di login, header `SAPISIDHASH`) |
-| `data/innertube` | `InnerTubeClient` + `InnerTubeParser`: home consigliata e correlati personalizzati |
-| `ui/*` | Schermate: Home (consigliati), Login, Ricerca, Canale, Iscrizioni, Cronologia, Impostazioni, Player |
+| `player` | `PlaybackManager`, `MediaSourceBuilder` (stream selection + googlevideo headers), `SubtitleLoader`, `SponsorSkipper` |
+| `data/account` | `AccountManager`: Google session (cookies from the login WebView, `SAPISIDHASH` header) |
+| `data/innertube` | `InnerTubeClient` + `InnerTubeParser`: account recommendations and personalised related videos |
+| `ui/*` | Screens: Home, Login, Search, Channel, Subscriptions, History, Settings, Player, Comments |
+| `util` | `I18n` (`tr(en, it)`), `CrashLog` / `SafeHandler`, `DeviceProfile` |
 
-## I 4 requisiti
+## Core design
 
-### 1. Blocco annunci
-Gli annunci YouTube non sono nel file video: è il player ufficiale (o l'IMA SDK) a riceverli
-dalla risposta `/player` (`adPlacements`, `playerAds`) e a riprodurli prima/durante il video.
-NewPipeExtractor legge da quella risposta solo gli URL degli stream `googlevideo.com`, e
-ExoPlayer riproduce direttamente quelli. Gli annunci non vengono mai richiesti, quindi non
-c'è niente da filtrare.
+### 1. Ad blocking
+YouTube ads are not part of the video file: the official player (or the IMA SDK) receives them
+from the `/player` response (`adPlacements`, `playerAds`) and plays them before or during the
+video. NewPipeExtractor only reads the `googlevideo.com` stream URLs from that response, and
+ExoPlayer plays those directly. Ads are never requested, so there is nothing to filter.
 
-È l'unico approccio che funziona davvero. Un `WebView` con `youtube.com` più un filtro di
-rete (stile uBlock) si rompe a ogni cambio lato server. YouTube ormai fa anche server-side ad
-insertion, cioè annunci cuciti nello stream. Un DNS/hosts-block non separa i domini degli annunci
-da quelli dei video. Il player ufficiale (IFrame / Android Player API) vieta per contratto di
-toccare gli annunci.
+It is the only approach that really works. A `WebView` with `youtube.com` plus a network
+filter (uBlock-style) breaks with every server-side change. YouTube also does server-side ad
+insertion, i.e. ads stitched into the stream. A DNS/hosts block cannot tell ad domains apart
+from video domains. The official player (IFrame / Android Player API) contractually forbids
+touching ads.
 
 ### 2. SponsorBlock
 - `SponsorBlockApi`: `GET /api/skipSegments/{sha256(videoId)[0..4]}?categories=[…]&actionTypes=["skip"]`.
-  L'endpoint hash-prefix non rivela al server quale video stai guardando. 404 vuol dire nessun segmento.
-- `SponsorBlockRepository`: scarica **tutte** le categorie e le salva in Room. Filtra quelle
-  scelte dall'utente solo al momento dell'uso. La cache dura 6 h; se la rete fallisce usa la cache scaduta.
-- `SponsorSkipper`: ogni 200 ms durante la riproduzione, se la posizione è in un segmento
-  → `seekTo(fine)`. Se l'utente fa seek dentro un segmento, quel segmento non viene saltato.
-  La snackbar "Saltato: Sponsor" ha il pulsante **Annulla**. I segmenti compaiono come marker
-  sulla timeline.
+  The hash-prefix endpoint does not reveal to the server which video you are watching. A 404 means no segments.
+- `SponsorBlockRepository`: downloads **all** categories and stores them in Room. The categories
+  chosen by the user are filtered only when used. The cache lasts 6 h; if the network fails the
+  expired cache is used.
+- `SponsorSkipper`: every 200 ms during playback, if the position is inside a segment
+  → `seekTo(end)`. If the user seeks into a segment, that segment is not skipped.
+  The "Skipped: Sponsor" snackbar has an **Undo** button. Segments are shown as markers on the
+  timeline.
 
-### 3. Ripresa della riproduzione
-Salvataggio in `playback_state` (Room, chiave `videoId`) da `PlayerViewModel.savePosition()`:
-- ogni N secondi durante la riproduzione (default 5, configurabile): protegge da kill e crash;
-- quando il player va in pausa (manuale, buffering, cuffie scollegate, perdita audio focus);
-- `ON_PAUSE` e `ON_STOP` dell'Activity (dopo onStop Android può uccidere il processo senza
-  altri callback). In `ON_STOP` il video viene anche messo in pausa;
-- `onCleared()` del ViewModel (equivalente di onDestroy per la schermata).
+### 3. Resuming playback
+Positions are saved in `playback_state` (Room, key `videoId`):
+- every N seconds during playback (default 5, configurable): protects against kills and crashes;
+- when the player pauses (manually, buffering, headphones unplugged, audio focus loss);
+- on `ON_PAUSE` and `ON_STOP` of the Activity (after onStop Android may kill the process without
+  further callbacks). On `ON_STOP` the video is also paused;
+- when a video is closed or replaced.
 
-Le scritture vanno su un `CoroutineScope` applicativo con dispatcher seriale, così non vengono
-cancellate insieme al ViewModel e restano nell'ordine giusto.
+Writes go to an application `CoroutineScope` with a serial dispatcher, so they are not
+cancelled together with a ViewModel and keep their order.
 
-Il `videoId` attivo è salvato in DataStore. All'avvio `MainActivity` lo riapre e il player
-fa `setMediaSource(source, posizioneSalvata)` **prima** di `prepare()`, quindi riparte da
-quel millisecondo. Uscire dal player con "indietro" è un'uscita volontaria: la posizione resta
-salvata, ma il video non viene riaperto in automatico all'avvio successivo.
+The active `videoId` is stored in DataStore. On start-up `MainActivity` reopens it and the
+player calls `setMediaSource(source, savedPosition)` **before** `prepare()`, so it restarts from
+that exact millisecond. Leaving the player with "back" is a deliberate exit: the position stays
+saved, but the video is not reopened automatically on the next start.
 
-### 4. Shorts nascosti a livello di modello dati
-Ogni `InfoItem` di NewPipe passa da `ContentMapper.map()`, che restituisce `null` per gli
-Shorts (`isShortFormContent`, URL `/shorts/`, opzionalmente durata ≤ 60 s). Nessuno Short esce
-dai repository, quindi home, ricerca, canali, iscrizioni e video correlati non devono filtrare
-nulla. In più, dei canali si carica solo la tab **Video** (mai la tab Shorts), e un link
-`/shorts/…` aperto dall'esterno viene rifiutato da `YouTubeRepository.videoDetails()`.
+### 4. Shorts hidden at the data-model level
+Every NewPipe `InfoItem` goes through `ContentMapper.map()`, which returns `null` for Shorts
+(`isShortFormContent`, `/shorts/` URLs, optionally duration ≤ 60 s). No Short ever leaves the
+repositories, so home, search, channels, subscriptions and related videos need no filtering.
+Moreover, only the **Videos** tab of a channel is loaded (never the Shorts tab), and a
+`/shorts/…` link opened from outside is rejected by `YouTubeRepository.videoDetails()`.
 
-## Account Google, velocità, sottotitoli
+## Google account, speed, subtitles
 
-### Consigliati dal profilo Google
-- **Login** (`LoginScreen`): pagina di accesso Google in un WebView con User-Agent di Chrome
-  mobile. A login completato i cookie di youtube.com restano nel `CookieManager` di sistema.
-  Se Google rifiuta il WebView ("browser non sicuro"), c'è **Impostazioni → Importa cookie**:
-  si incolla l'header `Cookie` copiato da un browser desktop già loggato.
-- **Home**: solo i consigliati dell'account (`browse` con `FEwhat_to_watch` sull'API InnerTube
-  del sito, autenticata con `SAPISIDHASH`), con scroll infinito. Le categorie non ci sono più.
-- **Correlati** nel player: quelli personalizzati dell'account (endpoint `next`). Se non sei
-  loggato si usano quelli di NewPipe.
-- **Cronologia**: dopo 10 s di visione il video viene segnato come visto sull'account, con gli
-  stessi ping `playbackTracking` del sito. Così i consigliati imparano anche da quello che guardi
-  qui. Si può disattivare dalle impostazioni.
-- `InnerTubeParser` non dipende dai percorsi JSON esatti: cerca i renderer video
-  (`lockupViewModel`, `videoRenderer`, …). Salta interi sotto-alberi di **annunci in-feed**
-  (`adSlotRenderer`, …) e di **Shorts** (`reelShelfRenderer`, `shortsLockupViewModel`, …).
+### Recommendations from your Google profile
+- **Sign-in** (`LoginScreen`): Google's sign-in page in a WebView with a mobile Chrome
+  User-Agent. Once signed in, the youtube.com cookies stay in the system `CookieManager`.
+  If Google rejects the WebView ("browser not secure"), use **Settings → Import cookies**:
+  paste the `Cookie` header copied from a signed-in desktop browser.
+- **Home**: the account's recommendations (`browse` with `FEwhat_to_watch` on the website's
+  InnerTube API, authenticated with `SAPISIDHASH`), with infinite scrolling.
+- **Related videos** in the player: the account's personalised ones (`next` endpoint). When
+  signed out, NewPipe's are used.
+- **History**: after 10 s of watching, the video is marked as watched on the account, with the
+  same `playbackTracking` pings as the website, so recommendations also learn from what you watch
+  here. It can be turned off in Settings.
+- `InnerTubeParser` does not depend on exact JSON paths: it looks for video renderers
+  (`lockupViewModel`, `videoRenderer`, …). It skips whole subtrees of **in-feed ads**
+  (`adSlotRenderer`, …) and **Shorts** (`reelShelfRenderer`, `shortsLockupViewModel`, …).
 
-### Consigli senza account (`LocalRecommender`)
-Senza login la home propone video calcolati **sul telefono** da due fonti già salvate in Room:
-- i **correlati dei video visti**, salvati ogni volta che apri un video senza richieste extra.
-  Un video che compare nei correlati di più video visti sale in classifica;
-- gli **ultimi video dei canali** seguiti e di quelli che guardi più spesso, pesati per
-  affinità (iscrizione, numero di visioni) e freschezza.
+### Recommendations without an account (`LocalRecommender`)
+Without signing in, the home page suggests videos computed **on the phone** from two sources
+already stored in Room:
+- the **related videos of watched videos**, saved every time you open a video with no extra
+  requests. A video that appears among the related videos of several watched videos ranks higher;
+- the **latest videos of the channels** you follow and of those you watch most, weighted by
+  affinity (subscription, number of views) and freshness.
 
-I video già visti sono esclusi, ci sono al massimo 2 video per canale nelle prime posizioni e a
-ogni aggiornamento l'ordine varia un po'. Il calcolo non usa la rete, quindi la home compare
-subito. Le fonti si aggiornano in background: canali più vecchi di 3 h, correlati mancanti
-solo su Wi-Fi.
-Con l'account collegato la home mostra invece il feed consigliato dell'account, e la scheda
-Iscrizioni il feed iscrizioni dell'account (una sola richiesta). Se l'account non risponde,
-la home ripiega sui consigli locali.
+Already watched videos are excluded, there are at most 2 videos per channel in the top
+positions, and the order varies slightly at every refresh. The computation uses no network, so
+the home page appears immediately. The sources are refreshed in the background: channels older
+than 3 h, missing related videos only on Wi-Fi.
+With an account, the home page shows the account's recommended feed instead, and the
+Subscriptions tab the account's subscription feed (a single request). If the account does not
+respond, the home page falls back to local recommendations.
 
-### Guarda più tardi e condivisione
-- Menu **⋮** su ogni video e pulsanti nel player: *Guarda più tardi*, *Condividi* e
-  *Condividi dal minuto attuale* (link `youtu.be/…?t=`).
-- La lista è locale (scheda **Raccolta**, insieme alla cronologia). Con l'account le modifiche
-  vengono inviate anche alla playlist "Guarda più tardi" di YouTube, e quella playlist viene
-  importata.
+### Watch later and sharing
+- **⋮** menu on every video and buttons in the player: *Watch later*, *Share* and
+  *Share from current time* (`youtu.be/…?t=` link).
+- The list is local (**Playlists** tab). With an account, changes are also sent to YouTube's
+  "Watch later" playlist, and that playlist is imported.
 
-### Qualità e aspetto
-- **Qualità minima e massima**: tutte le risoluzioni comprese nell'intervallo finiscono in un
-  unico manifest DASH adattivo. ExoPlayer parte da quella che la rete regge subito e sale.
-  Dall'ingranaggio del player si può fissarla a mano.
-- **Tema** Sistema / Chiaro / Scuro e interruttore **Colori di sistema (Material You)**. Se
-  disattivato si usa la palette di MauzTube.
+### Quality and appearance
+- **Minimum and maximum quality**: all resolutions within the range go into a single adaptive
+  DASH manifest. ExoPlayer starts with what the network can handle right away and steps up.
+  The quality can be fixed manually from the player's gear menu.
+- **Theme** System / Light / Dark and a **System colours (Material You)** switch. When off,
+  MauzTube's palette is used.
 
-### Velocità di apertura
-Misure reali sull'estrazione (NewPipeExtractor v0.26.5, JVM):
+### Opening speed
+Real extraction measurements (NewPipeExtractor v0.26.5):
 
-| | tempo di estrazione |
+| | extraction time |
 |---|---|
-| primo video dopo l'avvio | ~5 s |
-| video successivi | ~2 s (8 richieste HTTP in sequenza, di cui `next` ≈ 1 s) |
+| first video after start-up | ~5 s |
+| following videos | ~2 s (about 8 sequential HTTP requests, `next` ≈ 1 s) |
 
-Interventi:
-1. **Warm-up all'avvio**: connessioni TLS aperte e versione del client WEB ricavata subito.
-   Elimina buona parte del costo del primo video.
-2. **Prefetch** (come fa l'app ufficiale): vengono estratti in anticipo i primi 3 consigliati
-   della home e i primi 2 correlati dopo 5 s di riproduzione, con cache di 30 min e unione delle
-   richieste in corso. Aprire uno di questi video è quasi istantaneo. Il prefetch avviene solo
-   su rete non a consumo (Wi-Fi).
-3. **Anteprima immediata**: titolo e miniatura del video toccato compaiono subito nel player.
-4. **DASH a blocchi**: ogni stream viene riprodotto tramite un manifest DASH generato dai
-   metadati itag (`YoutubeProgressiveDashManifestCreator`, come NewPipe), invece di un'unica
-   richiesta progressiva aperta. ExoPlayer scarica blocchi con range limitato, quindi avvio e
-   seek sono più rapidi e non c'è throttling.
-5. **Buffer d'avvio** di 1,5 s (2,5 s dopo uno stallo) e buffer di riserva tra 30 e 50 s, così
-   un calo momentaneo della rete non blocca il video. La qualità automatica usa il 65% della
-   banda stimata, per non salire a una risoluzione che la rete non regge.
+What is done about it:
+1. **Warm-up at start-up**: TLS connections opened and the WEB client version fetched right
+   away. Removes most of the cost of the first video.
+2. **Prefetch** (like the official app): the first 3 home recommendations and the first 2
+   related videos (after 5 s of playback) are extracted in advance, with a 30 min cache and
+   merging of in-flight requests. Opening one of these videos is almost instant. Prefetching
+   only happens on unmetered networks (Wi-Fi). If you open a video whose prefetch is still
+   queued behind others, it is extracted immediately instead of waiting for its turn.
+3. **Early start** (`EarlyPlayerHub`): NewPipeExtractor makes about 7 sequential requests
+   (visitor_id, Android player, visitor_id, visionOS player, visitor_id, web player, `next`), but
+   the stream URLs it ends up using come from the visionOS response; the web player and `next`
+   (the slowest) are only needed for metadata, related videos and previews. When you open a
+   video, the downloader hands that response over as soon as it arrives and playback starts,
+   with the same URLs NewPipe would build (direct URL + `cpn`), while the full extraction keeps
+   going and later fills in description, related videos and previews without touching playback.
+   If that response is not enough (unplayable, live, URLs needing deciphering) the app simply
+   waits for the full extraction as before. Measured on 9 videos: streams ready in ~0.4 s instead
+   of ~2.3 s, first frame in ~2.6 s instead of ~4.7 s (medians).
+4. **Visitor ID reuse**: NewPipeExtractor asks for a fresh `visitor_id` for every client of every
+   video (3 sequential requests per video); like a browser cookie, the one obtained in the last
+   30 minutes for the same client is reused.
+5. **Video server pre-connection**: as soon as the response with the streams arrives, two
+   connections to the indicated `googlevideo.com` server are opened with `generate_204`, like
+   YouTube's own player does, only for the video being opened (not for prefetches). Video data
+   uses its own connection pool: connections idle for more than 30 s are dropped and 8 s without
+   data mark a connection as dead, so ExoPlayer retries at once on a new one.
+6. **Instant preview**: the tapped video's title and thumbnail appear in the player at once.
+7. **Chunked DASH**: every stream is played through a DASH manifest generated from the itag
+   metadata (`YoutubeProgressiveDashManifestCreator`, like NewPipe) instead of one open
+   progressive request. ExoPlayer downloads range-limited chunks, so start-up and seeking are
+   faster and there is no throttling.
+8. **Start-up buffer** of 1.5 s (2.5 s after a stall) and a 30–50 s reserve buffer, so a
+   momentary network drop does not stop the video. Automatic quality uses 65% of the estimated
+   bandwidth, so it does not climb to a resolution the network cannot sustain.
 
-### Salto sponsor senza blocchi
-Con la richiesta progressiva aperta, un seek fuori dal buffer (come lo skip di uno sponsor)
-apriva una nuova connessione a `googlevideo.com` con `Range: bytes=X-` illimitato. Questo tipo
-di richiesta può essere rifiutato (403) o rallentato. Il 403 faceva scattare la ri-estrazione
-automatica, con il video fermo in caricamento per alcuni secondi. Con il DASH a blocchi il seek
-scarica solo il blocco necessario, e dopo uno stallo bastano 1,5 s di buffer per ripartire.
-In caso di errore la ri-estrazione ora ignora la cache, perché gli URL possono essere scaduti.
+### Subtitles that never delay the video
+YouTube subtitle tracks (manual and auto-generated, TTML) are listed in the player's **CC** menu.
+They used to be merged into ExoPlayer's source: the video could not start until *every* track
+(up to 4) had been downloaded, and YouTube's subtitle server sometimes answers after ~10 s.
+Measured: first frame after 13–14 s instead of 2–3 s on videos with subtitles.
+Now subtitles are completely separate (`SubtitleLoader`): the video starts right away, only the
+chosen track is downloaded, parsed once with Media3's parser and shown by a Compose overlay
+(binary search on the cue list, 4 checks per second, recomposition only when the line changes).
+They can be turned on automatically in the app language from Settings.
 
-### Sottotitoli
-Tracce di YouTube (manuali e generate automaticamente) in TTML, aggiunte come sorgenti
-esterne e scelte dal pulsante **CC** del player. Per non rallentare l'avvio se ne caricano al
-massimo 4, in ordine: lingua del dispositivo, inglese, automatici. In Impostazioni si possono
-attivare automaticamente nella lingua del dispositivo.
+### Network resilience
+Mobile networks drop connections, change between Wi-Fi and data, and sometimes have slow DNS.
+Measured on a flaky network: requests stuck on a dead pooled connection for **30 s** (the old
+timeout) and DNS lookups failing after 10–17 s.
+- **Shorter timeouts with retry**: extractor API requests give up after 7 s without data and are
+  retried once on a fresh connection; other requests after 15 s.
+- **Network change**: when the network changes or is lost, pooled connections are dropped
+  immediately (`NetworkWatcher`) instead of being reused and hanging.
+- **DNS cache** (`CachingDns`): an address resolved recently is reused at once (and refreshed in
+  the background after 5 min). If DNS does not answer, the last valid addresses are used.
+
+### Sponsor skipping without stalls
+With one open progressive request, a seek outside the buffer (like a sponsor skip) opened a new
+connection to `googlevideo.com` with an unlimited `Range: bytes=X-`. That kind of request can be
+rejected (403) or throttled; the 403 triggered automatic re-extraction, with the video stuck
+loading for a few seconds. With chunked DASH the seek downloads only the needed chunk, and after
+a stall 1.5 s of buffer is enough to restart. On errors, re-extraction now bypasses the cache,
+because URLs may have expired.
 
 ### Player
-- **Unico player per tutta l'app** (`PlaybackManager`), indipendente dalle schermate:
-  - **mini player** in basso a destra mentre navighi. Toccalo per riaprire il video;
-    trascinalo verso il basso o verso destra per chiuderlo;
-  - **background e schermo spento**: `PlaybackService` (Media3 `MediaSessionService`) fornisce
-    notifica con controlli, lockscreen e cuffie. Fuori dall'app la traccia video viene
-    disattivata (solo audio: meno dati e batteria) e si riattiva al ritorno. Disattivabile.
-- **Controlli personalizzati** in Compose, con i colori del tema: barra con buffer e segmenti
-  SponsorBlock, doppio tocco ±10 s, menu **Qualità** (automatica o fissa), **Velocità** e
-  **Sottotitoli**, pulsante **Solo audio**.
-- In alto nel player: **Riproduzione automatica** (a fine video parte il primo consigliato non
-  ancora visto; disattivata di default, la scelta viene ricordata) e **Ripeti** il video
-  (disattivato di default).
-- **Gesti**: in verticale trascinando il video verso il basso diventa mini player; a schermo
-  intero trascinando verso l'alto compaiono i video consigliati.
-- **Decoder di riserva**: se il decoder hardware del telefono fallisce, il video riparte dallo
-  stesso punto con un altro decoder invece di fermarsi con un errore.
-- **Data di pubblicazione** in formato europeo (gg/mm/aaaa).
+- **One player for the whole app** (`PlaybackManager`), independent of screens:
+  - **mini player** at the bottom right while browsing (its size adapts to the screen). Tap it
+    to reopen the video; drag it down or right to close it;
+  - **background and screen off**: `PlaybackService` (Media3 `MediaSessionService`) provides the
+    notification with controls, lock screen and headphone buttons. Outside the app the video
+    track is disabled (audio only: less data and battery) and re-enabled on return. Can be
+    turned off.
+- **Custom controls** in Compose, using the theme colours: seek bar with buffer and SponsorBlock
+  segments, double tap ±10 s (further quick taps on the same side add 10 s each), **Quality**
+  (automatic or fixed), **Speed** and **Subtitles** menus, **Audio only** button.
+- At the top of the player: **Autoplay** (when the video ends, the first related video not yet
+  watched starts; off by default, the choice is remembered) and **Loop** (off by default).
+- **Gestures**: in portrait, dragging the video down turns it into the mini player; in
+  full screen, dragging up shows the related videos.
+- **Fallback decoder**: if the phone's hardware decoder fails, the video restarts from the same
+  point with another decoder instead of stopping with an error.
+- **Stutter protection**: if the phone keeps dropping frames (typical of 60 fps or 1080p on
+  low-end phones), the player lowers the load by itself, first to 30 fps and then to a lower
+  resolution, for the rest of the session. Short bursts right after seeks or quality changes are
+  ignored; a quality chosen manually always wins.
+- **Upload date** in European format (dd/mm/yyyy).
 
-### Commenti, ricerche, modalità anonimo
-- **Commenti** sotto il video (caricati solo quando arrivi a quel punto, per non rallentare
-  l'apertura), con risposte e caricamento progressivo. Con l'account collegato si può
-  **commentare**. In **Cronologia → I tuoi commenti** ci sono i commenti pubblicati da MauzTube,
-  con il relativo video, e la pagina dell'attività Google con tutti i commenti dell'account.
-- **Cronologia ricerche** (attiva di default, disattivabile e cancellabile dalle Impostazioni):
-  le ultime ricerche compaiono toccando la barra di ricerca e si possono rimuovere una per una.
-- **Modalità anonimo** (icona in alto): finché è attiva non vengono salvati cronologia, punti di
-  ripresa e ricerche, e l'account non viene usato. Vale fino alla chiusura dell'app, oppure si
-  disattiva dal banner in alto.
-- **Cronologia**: con l'account collegato è quella dell'account Google, con il punto di ripresa
-  locale sovrapposto; altrimenti è quella locale.
+### Comments, searches, incognito mode
+- **Comments** below the video (loaded only when you scroll there, so opening a video stays
+  fast), with replies and progressive loading. With an account you can **post comments**.
+  **History → Your comments** lists the comments posted from MauzTube with their videos, plus
+  Google's activity page with all the account's comments.
+- **Search history** (on by default, can be turned off and cleared in Settings): recent
+  searches appear when you tap the search box and can be removed one by one.
+- **Incognito mode** (icon at the top): while it is on, history, resume positions and searches
+  are not saved and the account is not used. It lasts until the app is closed, or can be turned
+  off from the banner at the top.
+- **History**: with an account it is the Google account's history, with the local resume point
+  overlaid; otherwise it is the local history.
 
-Predefiniti: tema **scuro**, colori di sistema **disattivati**, ripresa e riapertura
-automatica **disattivate** (si attivano dalle Impostazioni).
+Defaults: **dark** theme, system colours **off**, resume and automatic reopening **off**
+(they can be enabled in Settings).
 
-### Coda, playlist, primo avvio
-- **Coda** (`PlaybackManager.queue`): "Aggiungi alla coda" dal menu ⋮ di ogni video e con
-  l'icona dedicata su ogni video di "Prossimi video" nel player. La barra della coda compare in
-  tutta l'app solo quando la coda contiene video, e si apre con un tocco o trascinandola verso
-  l'alto. Toccando un video della coda puoi riprodurlo subito, spostarlo (in cima, su, giù) o
-  toglierlo. Il video successivo viene estratto in anticipo, così il passaggio è immediato. A coda
-  esaurita la barra scompare. La coda è solo in memoria: chiusa l'app, sparisce.
-- **Playlist**: "Guarda più tardi", playlist locali (create, rinominate, eliminate, "Riproduci
-  tutto" e "Aggiungi tutto in coda") e, con l'account collegato, le playlist dell'account
-  Google. "Salva in playlist" è disponibile dal menu ⋮ e dal player.
-- **Iscrizioni sincronizzate** con l'account: iscriversi e disiscriversi vale anche su
-  YouTube. Al primo collegamento le iscrizioni locali vengono aggiunte all'account; dopo,
-  l'account è la fonte di verità.
-- **Primo avvio**: scelta tra "Accedi con Google" e "Continua senza account".
+### Queue, playlists, first start
+- **Queue** (`PlaybackManager.queue`): "Add to queue" from the ⋮ menu of every video and with the
+  dedicated icon on every video in the player's "Up next". The queue bar appears across the app
+  only when the queue has videos, and opens with a tap or by dragging it up. Tapping a queued
+  video lets you play it now, move it (to the top, up, down) or remove it. The next video is
+  extracted in advance, so the switch is instant. When the queue is empty the bar disappears.
+  The queue lives in memory only: once the app is closed, it is gone.
+- **Playlists**: "Watch later", local playlists (create, rename, delete, "Play all" and "Add all
+  to queue") and, with an account, the Google account's playlists. "Save to playlist" is
+  available from the ⋮ menu and from the player.
+- **Subscriptions synced** with the account: subscribing and unsubscribing also applies on
+  YouTube. On first sign-in, local subscriptions are added to the account; afterwards the account
+  is the source of truth.
+- **First start**: choose between "Sign in with Google" and "Continue without an account".
 
-### Fluidità
-- Transizioni di navigazione da 140 ms (il default di Navigation Compose è 700 ms).
-- Tocco sul player immediato: il doppio tocco ±10 s non ritarda più il tocco singolo.
-- **Animazioni leggere** (`ui/components/Motion.kt`): casella di ricerca a pillola con sfondo
-  animato, ricerche recenti e risultati in dissolvenza, miniature in dissolvenza solo quando
-  arrivano dalla rete, entrata del mini player, banner anonimo, "rimbalzo" di Mi piace/Non mi
-  piace. Durano 150–220 ms e cambiano solo trasparenza, scala e posizione in `graphicsLayer`,
-  quindi non ricompongono né rimisurano la schermata. Misurato sull'emulatore: il lavoro
-  dell'app per fotogramma durante lo scorrimento resta sotto 1 ms, come senza animazioni.
-- `profileinstaller`: i Baseline Profile di Compose vengono compilati anche su APK
-  sideloaded. **Per un'app fluida va installato l'APK release**: la build debug è
-  "debuggable" e Compose al suo interno è molto più lento. Senza keystore personale la release
-  viene firmata con la chiave di debug, sia in locale che in CI (artifact
-  `MauzTube-release-debugkey-…`).
-- Miniature delle liste a 480p invece di 720p, connessioni HTTP riutilizzate più a lungo e
-  riaperte al ritorno nell'app, prefetch dei video fermi sullo schermo per 1,2 s (solo Wi-Fi,
-  massimo 2).
+### Any screen size
+Tested on a small phone (720×1280) with 130% font size, on a 1080×2400 phone in portrait and in
+landscape.
+- **First-start screen**: centred when it fits, scrollable when it does not, more compact on short
+  screens. It used to cut off the buttons on small phones, making the app unusable.
+- **Navigation**: bottom bar on phones (with a short label, e.g. "Subs", when a tab has little
+  room); side rail on wide screens (landscape phones, foldables, tablets), compact and
+  scrollable when the height is small.
+- **Wide screens**: video cards become rows (thumbnail on the left, details on the right) and
+  the player sits on the left with the details on the right, instead of a video taller than the
+  screen. The player is composed in a single place, so switching layouts never recreates it.
+- The real window size is measured (`ui/components/Adaptive.kt`), so the layout follows rotation,
+  multi-window and foldables. Only the language is overridden in the Activity configuration;
+  before, a full copy of the configuration made the UI believe it was still in portrait after a
+  rotation.
 
-### Lingua, popup, valutazioni
-- **Lingua**: inglese predefinito, oppure italiano. Si sceglie al primo avvio e si cambia dalle
-  Impostazioni; il cambio è immediato. Si adeguano anche date e contatori di YouTube
-  (`util/I18n.kt`, funzione `tr(en, it)`).
-- **Popup (Picture-in-Picture)**: pulsante nel player e attivazione automatica uscendo
-  dall'app con un video in riproduzione (disattivabile). Chiudendo il popup il video si ferma.
-- **Mi piace / Non mi piace**: salvati in locale (lista "Video che ti piacciono" tra le
-  playlist) e, con l'account collegato, sincronizzati con YouTube. La valutazione dell'account
-  prevale. I conteggi dei "non mi piace" arrivano da Return YouTube Dislike (disattivabile).
-- **Anteprima sulla barra**: trascinando la barra compare il fotogramma del punto scelto
-  (storyboard YouTube, sprite di circa 25 KB caricati solo durante il trascinamento).
-- **Schermo intero e foro della fotocamera**: il video occupa tutto il display, anche la zona
-  del foro/notch, mentre i comandi ne restano fuori, come nel client ufficiale.
+### Smoothness and animations
+- **Navigation transitions** (≤ 260 ms, Navigation's default is 700 ms): the next screen slides
+  in slightly from the right, the player rises from the bottom like on YouTube and slides down
+  when closed, tab changes use a fade with a slight zoom ("fade through").
+- **Micro-animations** (`ui/components/Motion.kt`): video cards sink slightly when pressed, the
+  play/pause button morphs, the ±10 s buttons spin when tapped, double tap shows a light arc
+  with the skipped seconds, Subscribe ⇄ Subscribed changes colour and text, Like/Dislike bounce,
+  rounded search box with animated background, recent searches and results fade in, the mini
+  player rises in, subtitles move up when the controls appear.
+- The press effect on cards is an `Indication` (`PressScaleIndication`): with
+  `clickable(interactionSource = null, …)` Compose creates it only on the first touch, so cards
+  scrolling by cost nothing extra. Thumbnails have no fade-in: while scrolling, every new
+  thumbnail would be drawn twice for 150 ms.
+- All of them change only opacity, scale and position inside `graphicsLayer`: the values are read
+  at draw time, so an animation frame neither recomposes nor re-measures the screen. Measured on
+  the emulator: the app's work per frame while scrolling stays below 1 ms, as without
+  animations.
+- Instant tap on the player: double tap ±10 s does not delay single taps.
+- `profileinstaller`: Compose Baseline Profiles are compiled even for sideloaded APKs.
+  **Install the release APK for a smooth app**: the debug build is "debuggable" and Compose is
+  much slower in it. Without a personal keystore the release is signed with the debug key, both
+  locally and in CI (artifact `MauzTube-release-debugkey-…`).
+- List thumbnails at 480p instead of 720p, HTTP connections kept alive longer and reopened when
+  returning to the app, prefetch of videos that stay on screen for 1.2 s (Wi-Fi only, at most 2).
 
-### Download
-- **Video MP4**: tutte le qualità H.264 fino a 1080p (più il file unico a 360p, più rapido).
-  Video e audio si scaricano separatamente e vengono uniti **senza ricodifica** con
-  `MediaMuxer` di Android: rapido e quasi senza CPU.
-- **Audio MP3** a 320/192/128 kbps: l'audio originale (AAC) viene decodificato con il
-  decoder di sistema e codificato in MP3 con LAME (jump3r, Java puro, nessuna libreria
-  nativa), con tag ID3 di titolo e artista. In più c'è l'**M4A originale**, senza ricodifica.
-- Scaricamento a blocchi da 8 MB con `Range`, così YouTube non rallenta. Riprova automatica con
-  link nuovi se quelli vecchi sono scaduti. Servizio in primo piano con notifica di avanzamento.
-  I file finiscono in **Download/MauzTube**. La pagina "Download" (dalla sezione Playlist)
-  permette di aprire, condividere, riprovare ed eliminare.
-- jump3r usa `javax.sound.sampled.AudioFormat`, che su Android non esiste: l'app ne include
-  una versione minima (`app/src/main/java/javax/sound/sampled/`), un semplice contenitore di dati.
+### Stability and resource usage
+- **Duplicate keys**: YouTube sometimes repeats a video in related videos, comments or
+  playlists (a playlist may contain the same video twice). In a Compose lazy list a duplicate key
+  closes the app: every list is now de-duplicated or uses position-based keys.
+- **Background errors never close the app**: every background operation (network, database)
+  runs with a safety handler (`SafeHandler`) that records the error instead of crashing.
+- **Error report**: crashes and handled errors are written to a small local file. After a crash
+  the app says so on the next start, and **Settings → Error report** lets you share or delete
+  it. Nothing is ever sent automatically.
+- **Low-memory phones** (`DeviceProfile`): smaller video buffer (15–30 s, at most 24 MB instead of
+  up to 130 MB) and a smaller image cache.
+- **No disk or network work on the UI thread**: checked with StrictMode (enabled only in debug
+  builds); the only remaining read is the app language, once per process.
+- Stress-tested with 22,000 random monkey events (taps, swipes, rotations, app switches): no
+  crashes or ANRs.
 
-### Fluidità misurata
-Misure fatte su un emulatore Android 17, prima e dopo, con gli script in `tools/baseline-profile/`:
-- **Baseline Profile** (`app/src/main/baseline-prof.txt`, circa 73.000 righe), registrato da un
-  percorso d'uso reale. Android compila in anticipo il codice dell'app (avvio, schede,
-  ricerca, scorrimento, player, commenti) invece di interpretarlo. Durante lo scorrimento il lavoro
-  di Compose scende da 0,4 a 0,1 ms per fotogramma.
-- **Impostazioni** come lista lazy, e lettura dello stato dei link fuori dal thread UI: il primo
-  fotogramma passa da 57–73 ms a 20–22 ms.
-- **ExoPlayer creato al primo video** invece che all'avvio dell'app.
-- **Miniature decodificate a 640×360** (la sorgente è ≤ 480 px): circa 2,7 volte meno memoria per
-  immagine e meno lavoro di rendering durante lo scorrimento.
+### Language, pop-up, ratings
+- **Language**: English by default, or Italian. Chosen at first start and changed from Settings;
+  the change is immediate. YouTube dates and counters follow it too (`util/I18n.kt`, function
+  `tr(en, it)`).
+- **Pop-up (Picture-in-Picture)**: button in the player and automatic activation when leaving
+  the app with a video playing (can be turned off). Closing the pop-up stops the video.
+- **Like / Dislike**: saved locally ("Liked videos" list among the playlists) and, with an
+  account, synced with YouTube. The account's rating wins. Dislike counts come from Return
+  YouTube Dislike (can be turned off).
+- **Seek-bar preview**: dragging the bar shows the frame at the chosen point (YouTube storyboard,
+  sprites of about 25 KB loaded only while dragging).
+- **Full screen and camera cutout**: the video uses the whole display, including the
+  cutout/notch area, while the controls stay outside it, like the official client.
 
-Nota: dopo ogni installazione da APK Android applica il profilo alla prima ottimizzazione in
-background, di solito con il telefono inattivo e in carica. Per farlo subito:
+### Downloads
+- **MP4 video**: all H.264 qualities up to 1080p (plus the single 360p file, faster).
+  Video and audio are downloaded separately and merged **without re-encoding** with Android's
+  `MediaMuxer`: fast and almost CPU-free.
+- **MP3 audio** at 320/192/128 kbps: the original audio (AAC) is decoded with the system decoder
+  and encoded to MP3 with LAME (jump3r, pure Java, no native library), with title and artist ID3
+  tags. There is also the **original M4A**, without re-encoding.
+- Downloading in 8 MB chunks with `Range`, so YouTube does not throttle. Automatic retry with
+  fresh links if the old ones have expired. Foreground service with a progress notification.
+  Files go to **Download/MauzTube**. The "Downloads" page (from the Playlists tab) lets you open,
+  share, retry and delete.
+- jump3r uses `javax.sound.sampled.AudioFormat`, which does not exist on Android: the app ships a
+  minimal version of it (`app/src/main/java/javax/sound/sampled/`), a plain data holder.
+
+### Measured smoothness
+Measurements on an Android 17 emulator, before and after, with the scripts in
+`tools/baseline-profile/`:
+- **Baseline Profile** (`app/src/main/baseline-prof.txt`), recorded from a real usage path.
+  Android compiles the app's code ahead of time (start-up, tabs, search, scrolling, player,
+  comments) instead of interpreting it. While scrolling, Compose's work drops from 0.4 to 0.1 ms
+  per frame.
+- **Settings** as a lazy list, and the link status read off the UI thread: the first frame goes
+  from 57–73 ms to 20–22 ms.
+- **ExoPlayer created with the first video** instead of at app start-up.
+- **Thumbnails decoded at 640×360** (the source is ≤ 480 px): about 2.7× less memory per image
+  and less rendering work while scrolling.
+- **Hardware bitmaps** (Coil's default): images are uploaded to GPU memory while being decoded,
+  in the background. With RGB_565 (used before) every new thumbnail was uploaded to the GPU while
+  drawing the frame, right during scrolling, which costs dropped frames at 90–120 Hz. Hardware
+  bitmaps also do not use the app's Java heap.
+- Compose work per frame while scrolling search results: 0.5–0.6 ms → 0.3 ms (median).
+
+Note: after each APK installation Android applies the profile at the first background
+optimisation, usually when the phone is idle and charging. To do it right away:
 `adb shell cmd package compile -f -m speed-profile com.mauztube`.
 
 ### Logo
-Logo originale (`docs/logo.svg`, `app/src/main/res/drawable/ic_logo.xml`): un cerchio cremisi
-con un anello di avanzamento aperto e un "play" al centro. Nessun rettangolo arrotondato né
-forme o colori del marchio di YouTube, quindi è distribuibile liberamente insieme al progetto. Varianti:
-icona adattiva (Android 8+), monocromatica per le icone a tema (Android 13+), riquadro per
-Android 7, icona piccola delle notifiche.
+Original logo (`docs/logo.svg`, `app/src/main/res/drawable/ic_logo.xml`): a crimson circle with
+an open progress ring and a "play" symbol in the middle. No rounded rectangle and no shapes or
+colours of the YouTube brand, so it can be freely distributed with the project. Variants:
+adaptive icon (Android 8+), monochrome for themed icons (Android 13+), square for Android 7,
+small notification icon.
 
-## Compilare
+## Building
 
-### Senza compilare in locale (GitHub Actions)
-1. Crea un repository su GitHub e fai push del progetto:
-   ```bash
-   git init && git add . && git commit -m "MauzTube"
-   git branch -M main
-   git remote add origin git@github.com:<utente>/MauzTube.git
-   git push -u origin main
-   ```
-2. **Actions → Build APK →** l'ultima esecuzione **→ Artifacts → `MauzTube-debug-…`**.
-3. Scompatta lo zip e installa l'APK (abilita "Origini sconosciute").
+### Without building locally (GitHub Actions)
+1. Fork the repository (or push the project to your own GitHub repository).
+2. **Actions → Build APK →** the latest run **→ Artifacts → `MauzTube-release-debugkey-…`**
+   (or `MauzTube-debug-…`).
+3. Unzip it and install the APK (allow "Install unknown apps").
 
-### In locale
-Requisiti: JDK 17+ (verificato con JDK 25; la CI usa il 21) e Android SDK con la piattaforma **android-37**
-(Android Studio la installa da solo; da riga di comando:
+### Locally
+Requirements: JDK 17+ (tested with JDK 25; CI uses 21) and the Android SDK with the
+**android-37** platform (Android Studio installs it by itself; from the command line:
 `sdkmanager "platforms;android-37.0"`).
 
 ```bash
-git clone https://github.com/<utente>/MauzTube.git
+git clone https://github.com/<user>/MauzTube.git
 cd MauzTube
-export ANDROID_HOME=$HOME/Android/Sdk      # oppure crea local.properties con sdk.dir=...
-./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
+export ANDROID_HOME=$HOME/Android/Sdk      # or create local.properties with sdk.dir=...
+./gradlew assembleRelease
+adb install app/build/outputs/apk/release/app-release.apk
 ```
 
-La debug ha applicationId `com.mauztube.debug` e convive con la release.
+The debug build (`./gradlew assembleDebug`) has applicationId `com.mauztube.debug` and can be
+installed next to the release.
 
-### Release firmata
-1. Crea un keystore, una volta sola, e **conservalo**: senza lo stesso keystore non potrai
-   aggiornare l'app installata.
+### Signed release
+1. Create a keystore, once, and **keep it safe**: without the same keystore you will not be able
+   to update the installed app.
    ```bash
    keytool -genkeypair -v -keystore mauztube-release.jks -alias mauztube \
      -keyalg RSA -keysize 4096 -validity 10000
    ```
-2. **Locale:** `cp keystore.properties.example keystore.properties`, compila i valori, poi
+2. **Locally:** `cp keystore.properties.example keystore.properties`, fill in the values, then
    `./gradlew assembleRelease` → `app/build/outputs/apk/release/app-release.apk`.
-3. **CI:** nei Secrets del repository aggiungi `KEYSTORE_BASE64` (`base64 -w0 mauztube-release.jks`),
-   `KEYSTORE_PASSWORD`, `KEY_ALIAS` e `KEY_PASSWORD`. Il workflow produrrà anche l'artifact
-   `MauzTube-release-…`.
+3. **CI:** add `KEYSTORE_BASE64` (`base64 -w0 mauztube-release.jks`), `KEYSTORE_PASSWORD`,
+   `KEY_ALIAS` and `KEY_PASSWORD` to the repository Secrets. The workflow will also produce the
+   `MauzTube-release-…` artifact.
 
-In alternativa puoi firmare a mano l'APK non firmato:
+Alternatively you can sign the unsigned APK by hand:
 ```bash
 zipalign -p 4 app-release-unsigned.apk aligned.apk
 apksigner sign --ks mauztube-release.jks --out MauzTube.apk aligned.apk
 ```
 
-## Limiti noti
+## Known limitations
 
-**Legali**
-- Usare un client non ufficiale che salta gli annunci viola i
-  [Termini di servizio di YouTube](https://www.youtube.com/t/terms) (accesso con mezzi
-  automatizzati, aggiramento della pubblicità). Il rischio pratico per il singolo utente è
-  basso, ma in teoria YouTube può bloccare IP o account. Questa app non usa account.
-- NewPipeExtractor è **GPL-3.0**: se distribuisci l'APK, anche MauzTube va distribuito con
-  licenza GPL-3.0 e con il sorgente.
-- Niente Play Store: Google rimuove i client YouTube alternativi. Distribuisci l'APK direttamente
-  (o tramite F-Droid / repository personale).
+**Legal**
+- Using an unofficial client that skips ads violates
+  [YouTube's Terms of Service](https://www.youtube.com/t/terms) (access by automated means,
+  circumventing advertising). The practical risk for an individual user is low, but in theory
+  YouTube can block IPs or accounts, including the Google account used to sign in.
+- NewPipeExtractor is **GPL-3.0**: if you distribute the APK, MauzTube must also be distributed
+  under GPL-3.0 together with its source code.
+- No Play Store: Google removes alternative YouTube clients. Distribute the APK directly (or
+  through F-Droid / a personal repository).
 
-**Manutenzione**
-- YouTube cambia spesso i meccanismi anti-scraping (cifratura delle firme, parametro `n`,
-  PoToken/BotGuard, client InnerTube). Quando la riproduzione smette di funzionare quasi sempre
-  basta **aggiornare `newpipeExtractor` in `gradle/libs.versions.toml`** alla release più recente
-  di [TeamNewPipe/NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor/releases) e
-  ricompilare. Conviene seguire le release.
-- Il **PoToken** (attestazione BotGuard) non è implementato. L'estrattore usa client che non lo
-  richiedono (Android/iOS/visionOS). Se YouTube lo rendesse obbligatorio ovunque, servirebbe
-  un `PoTokenProvider` basato su WebView, come fa l'app NewPipe
+**Maintenance**
+- YouTube often changes its anti-scraping mechanisms (signature cipher, `n` parameter,
+  PoToken/BotGuard, InnerTube clients). When playback stops working, **updating
+  `newpipeExtractor` in `gradle/libs.versions.toml`** to the latest release of
+  [TeamNewPipe/NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor/releases) and
+  rebuilding is almost always enough. Following their releases is recommended.
+- **PoToken** (BotGuard attestation) is not implemented. The extractor uses clients that do not
+  require it (Android/iOS/visionOS). If YouTube made it mandatory everywhere, a WebView-based
+  `PoTokenProvider` would be needed, as the NewPipe app does
   (`YoutubeStreamExtractor.setPoTokenProvider`).
-- Gli stream DASH "OTF" (alcuni video appena caricati o ex-live) vengono scartati. In quel caso
-  si ripiega su stream muxed o HLS.
-- **Login Google**: Google può bloccare l'accesso dal WebView (in quel caso usa "Importa
-  cookie"). Usare i cookie dell'account con un client non ufficiale è contro i ToS, e in teoria
-  espone l'account a restrizioni: valuta un account secondario. Se la sessione scade, serve un
-  nuovo accesso.
-- **Velocità**: con il prefetch i video "previsti" si aprono subito. Gli altri richiedono
-  comunque ~2 s di estrazione: è il costo delle ~8 richieste di NewPipeExtractor e non si può
-  azzerare senza riscrivere l'estrattore.
-- **Traduzione automatica dei sottotitoli** (`tlang`): YouTube la blocca con un 429 anti-bot
-  senza token, quindi non è inclusa.
-- **Video 18+**: con l'account collegato MauzTube chiede gli stream a YouTube come client
-  TV autenticato (`AuthenticatedStreamFetcher`), come fa yt-dlp con i cookie. Quei formati
-  però richiedono la decifratura del player JS di YouTube (firma e parametro `n`), e in
-  NewPipeExtractor v0.26.5 è rotta per il player attuale. È verificato: la firma non viene
-  trovata e `n` restituisce `[object Object]`; la correzione è nella PR upstream #1545. L'app
-  riconosce il problema e mostra un messaggio chiaro. Quando uscirà una release con la
-  correzione basterà aggiornare `newpipeExtractor`. Non è stato possibile provare il
-  percorso con un account maggiorenne reale.
-- Senza account le **iscrizioni** restano solo sul telefono; con l'account vengono sincronizzate
-  con YouTube (la lettura delle iscrizioni e delle playlist dell'account non è stata provata
-  con un account reale durante lo sviluppo).
+- DASH "OTF" streams (some freshly uploaded or former live videos) are discarded. In that case
+  muxed or HLS streams are used instead.
+- **Google sign-in**: Google may block sign-in from the WebView (use "Import cookies" then).
+  Using account cookies with an unofficial client is against the ToS and in theory exposes the
+  account to restrictions: consider a secondary account. If the session expires, sign in again.
+- **Speed**: thanks to prefetching, "predicted" videos open instantly. Others still need ~2 s of
+  extraction: that is the cost of NewPipeExtractor's ~8 requests and cannot be removed without
+  rewriting the extractor.
+- **Automatic subtitle translation** (`tlang`): YouTube blocks it with an anti-bot 429 without a
+  token, so it is not included.
+- **18+ videos**: with an account, MauzTube asks YouTube for the streams as an authenticated TV
+  client (`AuthenticatedStreamFetcher`), like yt-dlp does with cookies. Those formats, however,
+  require deciphering YouTube's JS player (signature and `n` parameter), which is broken for the
+  current player in NewPipeExtractor v0.26.5. Verified: the signature function is not found and
+  `n` returns `[object Object]`; the fix is in upstream PR #1545. The app recognises the problem
+  and shows a clear message. Once a release with the fix is out, updating `newpipeExtractor` will
+  be enough. This path could not be tested with a real adult account.
+- Without an account, **subscriptions** stay on the phone only; with an account they are synced
+  with YouTube. Reading the account's subscriptions and playlists, and posting comments, could
+  not be tested with a real account during development.
 
 ## Legal
 
@@ -402,17 +480,18 @@ applicable law (such as private copying where permitted). **Do not use it to inf
 copyright.** The authors do not condone piracy and are not responsible for any misuse.
 
 ### Google account
-Signing in is optional. Comments are posted only when you explicitly send them. Account cookies are stored only on your device and are sent only to
-YouTube/Google to load your recommendations, subscriptions, history and playlists. Using
-an account with an unofficial client may lead to restrictions imposed by Google; sign in
-at your own risk.
+Signing in is optional. Comments are posted only when you explicitly send them. Account
+cookies are stored only on your device and are sent only to YouTube/Google to load your
+recommendations, subscriptions, history and playlists. Using an account with an unofficial
+client may lead to restrictions imposed by Google; sign in at your own risk.
 
 ### Privacy
 MauzTube contains **no analytics, no tracking and no ads**, and the authors receive no data
-from it. Settings, history, playlists and downloads are stored locally on your device.
+from it. Settings, history, playlists, downloads and the error report are stored locally on
+your device; the error report leaves the phone only if you choose to share it.
 The app connects only to:
-- **YouTube / Google** (`youtube.com`, `googlevideo.com`, `ytimg.com`): video data, thumbnails
-  and, if signed in, account features;
+- **YouTube / Google** (`youtube.com`, `googlevideo.com`, `ytimg.com`): video data, thumbnails,
+  subtitles and, if signed in, account features;
 - **SponsorBlock** (`sponsor.ajay.app`): only a short hash prefix of the video ID is sent;
 - **Return YouTube Dislike** (`returnyoutubedislikeapi.com`, optional): the video ID is sent
   to retrieve vote counts.

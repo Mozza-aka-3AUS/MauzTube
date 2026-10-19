@@ -37,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -97,13 +98,14 @@ class PlaybackManager @Inject constructor(
     private val sponsorRepo: SponsorBlockRepository,
     private val settingsRepo: SettingsRepository,
     private val mediaSourceBuilder: MediaSourceBuilder,
+    private val subtitleLoader: SubtitleLoader,
     private val recommendations: RecommendationRepository,
     private val account: AccountManager,
     private val videoCache: VideoCacheRepository,
     private val ratings: com.mauztube.data.repository.RatingRepository,
     @ApplicationScope private val appScope: CoroutineScope,
 ) {
-    private val main = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val main = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + com.mauztube.util.SafeHandler)
 
     /** Coda seriale: i salvataggi vengono scritti nell'ordine in cui sono stati richiesti. */
     private val saveDispatcher = Dispatchers.IO.limitedParallelism(1)
@@ -116,6 +118,7 @@ class PlaybackManager @Inject constructor(
         buildPlayer().also {
             it.addListener(listener)
             it.addAnalyticsListener(PlaybackDiagnostics())
+            it.addAnalyticsListener(frameDropGuard)
         }
     }
 
@@ -138,6 +141,51 @@ class PlaybackManager @Inject constructor(
         .setLoadControl(mediaSourceBuilder.loadControl())
         .setTrackSelector(mediaSourceBuilder.trackSelector(context))
         .build()
+
+    // ---------------- Protezione dagli scatti ----------------
+    // Se il telefono non riesce a decodificare il video in tempo (fotogrammi persi in serie,
+    // tipico dei 60 fps o del 1080p su telefoni economici), si abbassa da soli il carico:
+    // prima 30 fps, poi una risoluzione più bassa. Vale per la sessione; una scelta manuale
+    // della qualità dal menu prevale.
+    private var perfMaxFps = Int.MAX_VALUE
+    private var perfMaxHeight = Int.MAX_VALUE
+    /** Salti, cambi di qualità e aperture fanno perdere qualche fotogramma da soli: si ignorano. */
+    private var lastDisruptionAt = 0L
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private val frameDropGuard = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+        override fun onDroppedVideoFrames(
+            eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+            droppedFrames: Int,
+            elapsedMs: Long,
+        ) {
+            // ExoPlayer avvisa ogni 50 fotogrammi persi: 50 in 1,5–20 s è uno scatto continuo.
+            // Raffiche più brevi o subito dopo un salto/cambio qualità non contano.
+            if (droppedFrames < 40 || elapsedMs !in 1_500..20_000 || !player.isPlaying || inBackground) return
+            if (android.os.SystemClock.elapsedRealtime() - lastDisruptionAt < 3_000) return
+            val format = player.videoFormat ?: return
+            when {
+                format.frameRate > 31f && perfMaxFps > 30 -> perfMaxFps = 30
+                format.height > 360 -> perfMaxHeight = format.height - 1
+                else -> return
+            }
+            Log.i(TAG, "Fotogrammi persi ($droppedFrames in ${elapsedMs}ms): limite ${perfMaxHeight}p/${perfMaxFps}fps")
+            lastDisruptionAt = android.os.SystemClock.elapsedRealtime()
+            applyTrackPreferences()
+        }
+
+        override fun onVideoInputFormatChanged(
+            eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+            format: androidx.media3.common.Format,
+            decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?,
+        ) { lastDisruptionAt = android.os.SystemClock.elapsedRealtime() }
+
+        override fun onPositionDiscontinuity(
+            eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) { lastDisruptionAt = android.os.SystemClock.elapsedRealtime() }
+    }
 
     private val skipper by lazy { SponsorSkipper(player) }
 
@@ -312,6 +360,9 @@ class PlaybackManager @Inject constructor(
             reportWatchProgress()
         }
         details = null
+        subtitleJob?.cancel()
+        _subtitleIndex.value = null
+        _subtitleText.value = null
         watchSession = null
         personalizedRelated = null
         autoRetried = false
@@ -341,6 +392,9 @@ class PlaybackManager @Inject constructor(
         player.stop()
         player.clearMediaItems()
         details = null
+        subtitleJob?.cancel()
+        _subtitleIndex.value = null
+        _subtitleText.value = null
         _nowPlaying.value = null
         _queue.value = emptyList()
         _fullscreen.value = false
@@ -454,26 +508,49 @@ class PlaybackManager @Inject constructor(
         player.trackSelectionParameters = params.build()
     }
 
-    fun textTracks(): List<TextTrackOption> = textGroups().mapIndexed { i, g ->
-        val f = g.getTrackFormat(0)
-        TextTrackOption(i, f.label ?: f.language ?: tr("Track ${i + 1}", "Traccia ${i + 1}"))
-    }
+    // ---------------- Sottotitoli (separati dal video: vedi SubtitleLoader) ----------------
 
-    fun selectedTextTrack(): Int? {
-        if (player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)) return null
-        return textGroups().indexOfFirst { it.isSelected }.takeIf { it >= 0 }
-    }
+    private val _subtitleIndex = MutableStateFlow<Int?>(null)
+    val subtitleIndex: StateFlow<Int?> = _subtitleIndex
+
+    /** Testo del sottotitolo da mostrare ora (null = niente). */
+    private val _subtitleText = MutableStateFlow<String?>(null)
+    val subtitleText: StateFlow<String?> = _subtitleText
+    private var subtitleJob: Job? = null
+
+    fun textTracks(): List<TextTrackOption> =
+        details?.subtitles.orEmpty().mapIndexed { i, s -> TextTrackOption(i, s.label) }
+
+    fun selectedTextTrack(): Int? = _subtitleIndex.value
 
     fun selectTextTrack(index: Int?) {
-        val params = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT)
-        if (index == null) {
-            params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-        } else {
-            val group = textGroups().getOrNull(index) ?: return
-            params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
+        subtitleJob?.cancel()
+        _subtitleText.value = null
+        val sub = index?.let { details?.subtitles?.getOrNull(it) }
+        _subtitleIndex.value = if (sub != null) index else null
+        if (sub == null) return
+        subtitleJob = main.launch {
+            val track = subtitleLoader.load(sub)
+            if (track == null) {
+                _subtitleIndex.value = null
+                android.widget.Toast.makeText(context, tr("Subtitles unavailable", "Sottotitoli non disponibili"), android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            // 4 controlli al secondo; lo StateFlow ignora i valori uguali, quindi l'interfaccia
+            // si aggiorna solo quando la riga cambia. In background non serve.
+            while (true) {
+                if (!inBackground) _subtitleText.value = track.textAt(player.currentPosition)
+                delay(if (inBackground) 1_000 else 250)
+            }
         }
-        player.trackSelectionParameters = params.build()
+    }
+
+    /** Attivazione automatica nella lingua dell'app (Impostazioni), senza ritardare l'avvio. */
+    private fun autoSelectSubtitles(d: VideoDetails) {
+        if (!settings.subtitlesAuto) return
+        val lang = com.mauztube.util.I18n.language.tag
+        val index = d.subtitles.indexOfFirst { it.languageTag.substringBefore('-').equals(lang, ignoreCase = true) }
+        if (index >= 0) selectTextTrack(index)
     }
 
     fun setSpeed(speed: Float) = player.setPlaybackSpeed(speed)
@@ -481,8 +558,6 @@ class PlaybackManager @Inject constructor(
     private fun videoGroups(): List<Tracks.Group> =
         player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }
 
-    private fun textGroups(): List<Tracks.Group> =
-        player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.length > 0 }
 
     private fun mimeOf(containerMime: String?): String? = when {
         containerMime == null -> null
@@ -502,8 +577,25 @@ class PlaybackManager @Inject constructor(
             applyTrackPreferences()
             if (account.loggedIn.value && personalizedRelated == null) launch { loadPersonalizedRelated(videoId) }
 
+            // PARTENZA ANTICIPATA (vedi EarlyPlayerHub): ci si registra PRIMA di avviare
+            // l'estrazione, poi vince chi arriva prima tra la risposta visionOS (video pronto
+            // a partire) e l'estrazione completa (già pronta se il video era precaricato).
+            val hub = if (!forceRefresh) com.mauztube.data.extractor.EarlyPlayerHub.register(videoId) else null
+            val full = repo.videoDetailsAsync(videoId, forceRefresh)
+            var startedEarly = false
             val extracted = try {
-                repo.videoDetails(videoId, forceRefresh)
+                if (hub == null || full.isCompleted) full.await()
+                else {
+                    val early = async { repo.earlyDetails(videoId, hub) }
+                    try {
+                        kotlinx.coroutines.selects.select {
+                            full.onAwait { it }
+                            early.onAwait { e -> e?.also { startedEarly = true } ?: full.await() }
+                        }
+                    } finally {
+                        early.cancel()
+                    }
+                }
             } catch (e: ShortsBlockedException) {
                 setState(PlayerUiState.Error(e.message.orEmpty(), retryable = false))
                 return@launch
@@ -513,6 +605,8 @@ class PlaybackManager @Inject constructor(
                 Log.w(TAG, "Estrazione fallita", e)
                 setState(PlayerUiState.Error(e.message ?: e.javaClass.simpleName, retryable = true))
                 return@launch
+            } finally {
+                hub?.let { com.mauztube.data.extractor.EarlyPlayerHub.unregister(videoId, it) }
             }
             val d = personalizedRelated?.let { extracted.copy(related = it) } ?: extracted
             details = d
@@ -535,6 +629,7 @@ class PlaybackManager @Inject constructor(
             player.playWhenReady = true
 
             setState(PlayerUiState.Ready(d, emptyList(), resumeMs))
+            autoSelectSubtitles(d)
             prefetchNextInQueue()
             if (settings.showDislikes && !d.isLive) {
                 launch { ratings.counts(videoId)?.let { if (_nowPlaying.value?.videoId == videoId) _votes.value = it } }
@@ -545,6 +640,10 @@ class PlaybackManager @Inject constructor(
             if (!incognito) appScope.launch(saveDispatcher) { playback.setActiveVideo(videoId) }
             savePosition()
 
+            // Partito in anticipo: titolo, descrizione, consigliati e anteprime arrivano con
+            // l'estrazione completa, senza toccare la riproduzione.
+            if (startedEarly) launch { completeDetails(videoId, full, d) }
+
             loopsJob = main.launch {
                 launch { periodicSaveLoop() }
                 launch { sponsorLoop(videoId, d) }
@@ -553,12 +652,42 @@ class PlaybackManager @Inject constructor(
         }
     }
 
+    private suspend fun completeDetails(videoId: String, full: kotlinx.coroutines.Deferred<VideoDetails>, early: VideoDetails) {
+        val fd = try {
+            full.await()
+        } catch (e: ShortsBlockedException) {
+            if (_nowPlaying.value?.videoId == videoId) {
+                player.stop()
+                setState(PlayerUiState.Error(e.message.orEmpty(), retryable = false))
+            }
+            return
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Il video sta già andando: restano i metadati essenziali della risposta del player.
+            Log.w(TAG, "Metadati completi non disponibili", e)
+            return
+        }
+        if (_nowPlaying.value?.videoId != videoId) return
+        // Stessi sottotitoli (l'indice scelto resta valido) e correlati dell'account se ci sono.
+        val merged = fd.copy(subtitles = early.subtitles, related = personalizedRelated ?: fd.related)
+        details = merged
+        _nowPlaying.update { np ->
+            val s = np?.state
+            if (np != null && s is PlayerUiState.Ready) np.copy(state = s.copy(details = merged)) else np
+        }
+        if (personalizedRelated == null && merged.related.isNotEmpty() && !incognito) {
+            appScope.launch { videoCache.saveRelated(videoId, merged.related) }
+        }
+    }
+
     /** Vincoli di qualità automatica, codec preferito, sottotitoli, traccia video on/off. */
     private fun applyTrackPreferences() {
         val b = player.trackSelectionParameters.buildUpon()
-            .setMaxVideoSize(Int.MAX_VALUE, settings.maxVideoHeight)
-            .setMinVideoSize(0, settings.minVideoHeight)
-            .setPreferredTextLanguage(if (settings.subtitlesAuto) com.mauztube.util.I18n.language.tag else null)
+            .setMaxVideoSize(Int.MAX_VALUE, minOf(settings.maxVideoHeight, perfMaxHeight))
+            .setMaxVideoFrameRate(perfMaxFps)
+            .setMinVideoSize(0, minOf(settings.minVideoHeight, perfMaxHeight))
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, _audioOnly.value || inBackground)
         mimeOf(preferredVideoMime)?.let { b.setPreferredVideoMimeType(it) }
         player.trackSelectionParameters = b.build()

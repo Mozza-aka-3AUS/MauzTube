@@ -52,11 +52,11 @@ class AppViewModel @Inject constructor(
     val onboardingDone: StateFlow<Boolean?> = settings.onboardingDone
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    fun completeOnboarding() = viewModelScope.launch { settings.setOnboardingDone() }
+    fun completeOnboarding() = viewModelScope.launch(com.mauztube.util.SafeHandler) { settings.setOnboardingDone() }
 
     init {
         // Con l'account collegato le iscrizioni vengono allineate a ogni avvio/login.
-        viewModelScope.launch { account.loggedIn.collect { if (it) subscriptions.sync() } }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { account.loggedIn.collect { if (it) subscriptions.sync() } }
     }
 
     // ---- Finestra "Salva in playlist" ----
@@ -71,7 +71,7 @@ class AppViewModel @Inject constructor(
     override fun saveToPlaylist(video: VideoItem) {
         _playlistTarget.value = video
         if (account.loggedIn.value && _accountPlaylists.value.isEmpty()) {
-            viewModelScope.launch { _accountPlaylists.value = runCatching { playlists.accountPlaylists() }.getOrDefault(emptyList()) }
+            viewModelScope.launch(com.mauztube.util.SafeHandler) { _accountPlaylists.value = runCatching { playlists.accountPlaylists() }.getOrDefault(emptyList()) }
         }
     }
 
@@ -80,15 +80,15 @@ class AppViewModel @Inject constructor(
     fun playlistsContaining(videoId: String) = playlists.playlistsContaining(videoId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(1_000), emptySet())
 
-    fun toggleLocalPlaylist(playlistId: Long, video: VideoItem, contained: Boolean) = viewModelScope.launch {
+    fun toggleLocalPlaylist(playlistId: Long, video: VideoItem, contained: Boolean) = viewModelScope.launch(com.mauztube.util.SafeHandler) {
         if (contained) playlists.remove(playlistId, video.id) else playlists.add(playlistId, video)
     }
 
-    fun addToAccountPlaylist(playlistId: String, video: VideoItem) = viewModelScope.launch {
+    fun addToAccountPlaylist(playlistId: String, video: VideoItem) = viewModelScope.launch(com.mauztube.util.SafeHandler) {
         runCatching { playlists.addToAccountPlaylist(playlistId, video) }
     }
 
-    fun createPlaylistWith(name: String, video: VideoItem) = viewModelScope.launch {
+    fun createPlaylistWith(name: String, video: VideoItem) = viewModelScope.launch(com.mauztube.util.SafeHandler) {
         val id = playlists.create(name)
         playlists.add(id, video)
     }

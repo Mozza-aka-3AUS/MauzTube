@@ -81,95 +81,122 @@ fun VideoCard(
     /** Mostra l'icona "Aggiungi in coda" direttamente sulla card (es. "Prossimi video"). */
     showQueueButton: Boolean = false,
 ) {
+    // Schermi larghi (orizzontale, pieghevoli, tablet): riga con miniatura a sinistra,
+    // così una card non occupa più dell'intero schermo in altezza.
+    val screenW = windowSize().widthDp
+    // Ripple + affondamento creati solo al primo tocco (vedi PressScaleIndication).
+    val press = Modifier.clickable(interactionSource = null, indication = PressScaleIndication, onClick = onClick)
+    if (screenW >= 600f) {
+        Row(
+            modifier.fillMaxWidth().then(press).padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            VideoThumb(video, progress, Modifier.width((screenW * 0.32f).coerceIn(220f, 360f).dp))
+            Spacer(Modifier.width(14.dp))
+            VideoInfo(video, extraLine, showQueueButton, showAvatar = false, Modifier.weight(1f))
+        }
+        return
+    }
     Column(
         modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(press)
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .clip(ThumbShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            // Decodifica a 640×360: le miniature sorgente sono ≤ 480 px di altezza, quindi
-            // ingrandirle alla larghezza dello schermo non aggiunge dettaglio ma costa memoria
-            // e tempo di caricamento sulla GPU durante lo scorrimento.
-            val context = LocalContext.current
-            val request = remember(video.thumbnailUrl) {
-                coil3.request.ImageRequest.Builder(context).data(video.thumbnailUrl).size(640, 360).build()
-            }
-            AsyncImage(
-                model = request,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            val badge = if (video.isLive) "LIVE" else Format.duration(video.durationSeconds)
-            if (badge.isNotEmpty()) {
-                Text(
-                    badge,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                        .background(
-                            if (video.isLive) BrandRed else Color.Black.copy(alpha = 0.78f),
-                            RoundedCornerShape(6.dp),
-                        )
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
-            if (progress != null && progress > 0f) {
-                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color.Gray.copy(alpha = 0.6f)))
-                Box(
-                    Modifier.align(Alignment.BottomStart).fillMaxWidth(progress.coerceIn(0f, 1f))
-                        .height(4.dp).background(BrandRed)
-                )
-            }
+        VideoThumb(video, progress, Modifier.fillMaxWidth())
+        VideoInfo(video, extraLine, showQueueButton, showAvatar = true, Modifier.padding(top = 10.dp))
+    }
+}
+
+@Composable
+private fun VideoThumb(video: VideoItem, progress: Float?, modifier: Modifier) {
+    Box(
+        modifier
+            .aspectRatio(16f / 9f)
+            .clip(ThumbShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        // Decodifica a 640×360: le miniature sorgente sono ≤ 480 px di altezza, quindi
+        // ingrandirle alla larghezza dello schermo non aggiunge dettaglio ma costa memoria
+        // e tempo di caricamento sulla GPU durante lo scorrimento.
+        val context = LocalContext.current
+        val request = remember(video.thumbnailUrl) {
+            coil3.request.ImageRequest.Builder(context).data(video.thumbnailUrl).size(640, 360).build()
         }
-        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.Top) {
+        AsyncImage(
+            model = request,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        val badge = if (video.isLive) "LIVE" else Format.duration(video.durationSeconds)
+        if (badge.isNotEmpty()) {
+            Text(
+                badge,
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .background(
+                        if (video.isLive) BrandRed else Color.Black.copy(alpha = 0.78f),
+                        RoundedCornerShape(6.dp),
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+        if (progress != null && progress > 0f) {
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color.Gray.copy(alpha = 0.6f)))
+            Box(
+                Modifier.align(Alignment.BottomStart).fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .height(4.dp).background(BrandRed)
+            )
+        }
+    }
+}
+
+@Composable
+private fun VideoInfo(video: VideoItem, extraLine: String?, showQueueButton: Boolean, showAvatar: Boolean, modifier: Modifier) {
+    Row(modifier, verticalAlignment = Alignment.Top) {
+        if (showAvatar) {
             Avatar(video.uploaderAvatarUrl, video.uploaderName, 36)
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                video.title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val views = video.viewText ?: Format.views(video.viewCount)
+            val meta = listOf(video.uploaderName, views, video.textualUploadDate.orEmpty())
+                .filter { it.isNotBlank() }
+                .joinToString(" · ")
+            Text(
+                meta,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+            if (extraLine != null) {
                 Text(
-                    video.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val views = video.viewText ?: Format.views(video.viewCount)
-                val meta = listOf(video.uploaderName, views, video.textualUploadDate.orEmpty())
-                    .filter { it.isNotBlank() }
-                    .joinToString(" · ")
-                Text(
-                    meta,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                    extraLine,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = 2.dp),
                 )
-                if (extraLine != null) {
-                    Text(
-                        extraLine,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
             }
-            if (showQueueButton) {
-                val actions = LocalVideoActions.current
-                IconButton(onClick = { actions?.enqueue(video) }, modifier = Modifier.size(36.dp)) {
-                    Icon(AppIcons.AddToQueue, tr("Add to queue", "Aggiungi in coda"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            VideoMenu(video)
         }
+        if (showQueueButton) {
+            val actions = LocalVideoActions.current
+            IconButton(onClick = { actions?.enqueue(video) }, modifier = Modifier.size(36.dp)) {
+                Icon(AppIcons.AddToQueue, tr("Add to queue", "Aggiungi in coda"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        VideoMenu(video)
     }
 }
 

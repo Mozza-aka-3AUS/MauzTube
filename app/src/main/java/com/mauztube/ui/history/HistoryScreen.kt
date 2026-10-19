@@ -70,11 +70,11 @@ class HistoryViewModel @Inject constructor(
     val accountHistory = PagedListController<VideoItem>(viewModelScope) { recommendations.history() }
 
     init {
-        viewModelScope.launch { loggedIn.collect { if (it) accountHistory.refresh() } }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { loggedIn.collect { if (it) accountHistory.refresh() } }
     }
 
-    fun remove(videoId: String) = viewModelScope.launch { playback.delete(videoId) }
-    fun clear() = viewModelScope.launch { playback.clearHistory() }
+    fun remove(videoId: String) = viewModelScope.launch(com.mauztube.util.SafeHandler) { playback.delete(videoId) }
+    fun clear() = viewModelScope.launch(com.mauztube.util.SafeHandler) { playback.clearHistory() }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

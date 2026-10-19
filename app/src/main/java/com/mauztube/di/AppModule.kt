@@ -22,6 +22,11 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
 
+/** Client HTTP per i dati audio/video (googlevideo.com), separato da quello delle API. */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class MediaHttp
+
 /** Scope che sopravvive ai ViewModel: usato per i salvataggi che non devono essere cancellati. */
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
@@ -33,11 +38,33 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
+    fun provideDns(): com.mauztube.data.net.CachingDns = com.mauztube.data.net.CachingDns()
+
+    @Provides
+    @Singleton
+    fun provideOkHttpClient(dns: com.mauztube.data.net.CachingDns): OkHttpClient = OkHttpClient.Builder()
         // Connessioni riutilizzate più a lungo: meno handshake TLS ⇒ estrazione più rapida.
+        // Al cambio di rete il pool viene svuotato (NetworkWatcher).
         .connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .dns(dns)
+        // Una connessione bloccata non deve fermare tutto per 30 s (default precedente):
+        // dopo 15 s senza dati la richiesta fallisce e chi la usa riprova su una connessione nuova.
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * Connessioni ai server video: tenute aperte al massimo 30 s (una connessione inattiva più a
+     * lungo può essere stata chiusa in silenzio dalla rete e bloccherebbe la richiesta fino al
+     * timeout) e 8 s senza dati per dichiararla morta: ExoPlayer riprova subito su una nuova.
+     */
+    @Provides
+    @Singleton
+    @MediaHttp
+    fun provideMediaHttpClient(base: OkHttpClient): OkHttpClient = base.newBuilder()
+        .connectionPool(okhttp3.ConnectionPool(6, 30, TimeUnit.SECONDS))
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
     @Provides
@@ -50,7 +77,7 @@ object AppModule {
     @Provides
     @Singleton
     @ApplicationScope
-    fun provideApplicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    fun provideApplicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mauztube.util.SafeHandler)
 
     @Provides
     @Singleton

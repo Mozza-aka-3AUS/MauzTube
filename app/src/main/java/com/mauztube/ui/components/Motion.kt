@@ -8,8 +8,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.node.invalidateDraw
+import androidx.compose.ui.graphics.drawscope.scale
+import kotlinx.coroutines.launch
 
 /**
  * Animazioni leggere condivise. Agiscono solo su trasparenza/scala/traslazione dentro
@@ -44,4 +49,75 @@ fun Modifier.popOnChange(trigger: Any?): Modifier {
         s.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow))
     }
     return graphicsLayer { scaleX = s.value; scaleY = s.value }
+}
+
+/**
+ * Leggero "affondamento" mentre l'elemento è premuto (feedback tattile visivo). Nelle liste
+ * la pressione viene riconosciuta solo dopo un istante senza scorrimento, quindi durante lo
+ * scroll non si attiva.
+ */
+@Composable
+fun Modifier.pressScale(interaction: androidx.compose.foundation.interaction.InteractionSource, pressedScale: Float = 0.97f): Modifier {
+    val pressed by interaction.collectIsPressedAsState()
+    val scale = androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) pressedScale else 1f,
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "press",
+    )
+    return graphicsLayer { scaleX = scale.value; scaleY = scale.value }
+}
+
+/**
+ * Feedback al tocco per gli elementi delle liste: ripple del tema + leggero "affondamento".
+ *
+ * È una Indication (non un modificatore composto): con `clickable(interactionSource = null, …)`
+ * Compose la crea SOLO al primo tocco dell'elemento. Le card che scorrono sullo schermo senza
+ * essere toccate non pagano nulla (niente stato, animazioni o coroutine per card), e
+ * l'affondamento è applicato in fase di disegno, senza ricomporre né rimisurare.
+ */
+object PressScaleIndication : androidx.compose.foundation.IndicationNodeFactory {
+    override fun create(interactionSource: androidx.compose.foundation.interaction.InteractionSource): androidx.compose.ui.node.DelegatableNode =
+        PressScaleNode(interactionSource)
+
+    override fun equals(other: Any?): Boolean = other === this
+    override fun hashCode(): Int = 0x5ca1e
+}
+
+private class PressScaleNode(
+    private val source: androidx.compose.foundation.interaction.InteractionSource,
+) : androidx.compose.ui.node.DelegatingNode(), androidx.compose.ui.node.DrawModifierNode {
+    private val amount = Animatable(1f)
+    private var animation: kotlinx.coroutines.Job? = null
+
+    init {
+        delegate(androidx.compose.material3.ripple().create(source))
+    }
+
+    override fun onAttach() {
+        coroutineScope.launch {
+            val pressed = mutableListOf<androidx.compose.foundation.interaction.PressInteraction.Press>()
+            source.interactions.collect { i ->
+                when (i) {
+                    is androidx.compose.foundation.interaction.PressInteraction.Press -> pressed += i
+                    is androidx.compose.foundation.interaction.PressInteraction.Release -> pressed -= i.press
+                    is androidx.compose.foundation.interaction.PressInteraction.Cancel -> pressed -= i.press
+                    else -> return@collect
+                }
+                val target = if (pressed.isEmpty()) 1f else 0.97f
+                animation?.cancel()
+                animation = launch {
+                    amount.animateTo(
+                        target,
+                        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                    ) { invalidateDraw() }
+                }
+            }
+        }
+    }
+
+    override fun androidx.compose.ui.graphics.drawscope.ContentDrawScope.draw() {
+        val s = amount.value
+        if (s == 1f) drawContent()
+        else scale(s) { this@draw.drawContent() }
+    }
 }

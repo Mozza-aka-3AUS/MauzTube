@@ -50,7 +50,7 @@ class DownloadService : Service() {
     @Inject lateinit var youtube: YouTubeRepository
     @Inject lateinit var http: OkHttpClient
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mauztube.util.SafeHandler)
     private var worker: Job? = null
     private var lastNotify = 0L
 

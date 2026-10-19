@@ -67,6 +67,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.tween
+import com.mauztube.ui.components.pressScale
+import androidx.compose.animation.togetherWith
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -169,6 +178,28 @@ fun VideoView(player: Player, modifier: Modifier = Modifier, pipSurface: Boolean
     )
 }
 
+/** Riga dei sottotitoli (testo bianco su fondo scuro semitrasparente, come YouTube). */
+@Composable
+fun SubtitleOverlay(manager: com.mauztube.player.PlaybackManager, raised: Boolean, large: Boolean, modifier: Modifier = Modifier) {
+    val text by manager.subtitleText.collectAsStateWithLifecycle()
+    val lift by androidx.compose.animation.core.animateDpAsState(
+        if (raised) 56.dp else 12.dp, androidx.compose.animation.core.tween(220), label = "subLift",
+    )
+    val t = text ?: return
+    Text(
+        t,
+        color = Color.White,
+        fontSize = if (large) 20.sp else 14.sp,
+        lineHeight = if (large) 26.sp else 18.sp,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        modifier = modifier
+            .graphicsLayer { translationY = -lift.toPx() }
+            .padding(horizontal = 24.dp)
+            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
 /**
  * Player completo con controlli personalizzati, coerenti con il tema dell'app.
  */
@@ -206,6 +237,11 @@ fun PlayerWithControls(
     var interaction by remember { mutableIntStateOf(0) }
     var scrubFraction by remember { mutableStateOf<Float?>(null) }
     var seekFeedback by remember { mutableStateOf<String?>(null) }
+    // Doppio tocco ±10 s: lato, secondi accumulati, contatore che fa ripartire l'animazione.
+    var tapSide by remember { mutableIntStateOf(0) }
+    var tapSeconds by remember { mutableIntStateOf(0) }
+    var tapTick by remember { mutableIntStateOf(0) }
+    var lastSeekTapAt by remember { mutableStateOf(0L) }
     var sheetOpen by remember { mutableStateOf(false) }
     val primary = MaterialTheme.colorScheme.primary
 
@@ -256,9 +292,15 @@ fun PlayerWithControls(
                 .pointerInputTaps(
                     onTap = { visible = !visible; interaction++ },
                     onDoubleTap = { x, width ->
-                        visible = !visible // annulla il cambio di visibilità del primo tocco
-                        if (x < width / 2) { player.seekBack(); seekFeedback = "−10 s" }
-                        else { player.seekForward(); seekFeedback = "+10 s" }
+                        val side = if (x < width / 2) -1 else 1
+                        val now = System.currentTimeMillis()
+                        // Primo doppio tocco: annulla il cambio di visibilità del tocco precedente.
+                        if (now - lastSeekTapAt > 700 || side != tapSide) visible = !visible
+                        tapSeconds = if (side == tapSide && now - lastSeekTapAt < 900) tapSeconds + 10 else 10
+                        lastSeekTapAt = now
+                        tapSide = side
+                        tapTick++
+                        if (side < 0) player.seekBack() else player.seekForward()
                         interaction++
                     },
                 )
@@ -283,10 +325,19 @@ fun PlayerWithControls(
                 }
         )
 
+        // Sottotitoli: sopra il video, si alzano quando compare la barra dei controlli.
+        SubtitleOverlay(
+            manager,
+            raised = visible || scrubFraction != null,
+            large = fullscreen,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+
         val buffering = snap.playbackState == Player.STATE_BUFFERING || loading
         if (buffering) {
             CircularProgressIndicator(Modifier.align(Alignment.Center).size(48.dp), color = primary)
         }
+        DoubleTapFlash(tapSide, tapTick, if (tapSide < 0) "−$tapSeconds s" else "+$tapSeconds s")
         seekFeedback?.let {
             Text(
                 it, color = Color.White, style = MaterialTheme.typography.titleMedium,
@@ -337,14 +388,15 @@ fun PlayerWithControls(
                         AppIcons.Headphones, tr("Audio only", "Solo audio"), onToggleAudioOnly,
                         tint = if (audioOnly) primary else Color.White,
                     )
+                    val subtitleIndex by manager.subtitleIndex.collectAsStateWithLifecycle()
                     if (manager.textTracks().isNotEmpty()) {
                         ControlButton(
                             AppIcons.ClosedCaption, tr("Subtitles", "Sottotitoli"),
                             onClick = {
-                                manager.selectTextTrack(if (manager.selectedTextTrack() == null) 0 else null)
+                                manager.selectTextTrack(if (subtitleIndex == null) 0 else null)
                                 interaction++
                             },
-                            tint = if (manager.selectedTextTrack() != null) primary else Color.White,
+                            tint = if (subtitleIndex != null) primary else Color.White,
                         )
                     }
                     ControlButton(Icons.Default.Settings, tr("Settings", "Impostazioni"), { sheetOpen = true })
@@ -357,7 +409,7 @@ fun PlayerWithControls(
                         horizontalArrangement = Arrangement.spacedBy(28.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        ControlButton(AppIcons.Replay10, tr("Back 10 s", "Indietro 10 s"), { player.seekBack(); interaction++ }, size = 40)
+                        ControlButton(AppIcons.Replay10, tr("Back 10 s", "Indietro 10 s"), { player.seekBack(); interaction++ }, size = 40, spin = -40f)
                         val ended = snap.playbackState == Player.STATE_ENDED
                         Box(
                             Modifier.size(64.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
@@ -371,18 +423,28 @@ fun PlayerWithControls(
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(
-                                when {
-                                    ended -> Icons.Default.Refresh
-                                    snap.isPlaying -> AppIcons.Pause
-                                    else -> Icons.Default.PlayArrow
+                            // Cambio play ⇄ pausa con una piccola trasformazione (scala + dissolvenza).
+                            androidx.compose.animation.AnimatedContent(
+                                targetState = when { ended -> 2; snap.isPlaying -> 1; else -> 0 },
+                                transitionSpec = {
+                                    (androidx.compose.animation.scaleIn(tween(180), initialScale = 0.5f) + fadeIn(tween(140)))
+                                        .togetherWith(androidx.compose.animation.scaleOut(tween(120), targetScale = 0.5f) + fadeOut(tween(100)))
                                 },
-                                contentDescription = tr("Play/Pause", "Riproduci/Pausa"),
-                                tint = Color.White,
-                                modifier = Modifier.size(44.dp),
-                            )
+                                label = "playPause",
+                            ) { kind ->
+                                Icon(
+                                    when (kind) {
+                                        2 -> Icons.Default.Refresh
+                                        1 -> AppIcons.Pause
+                                        else -> Icons.Default.PlayArrow
+                                    },
+                                    contentDescription = tr("Play/Pause", "Riproduci/Pausa"),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(44.dp),
+                                )
+                            }
                         }
-                        ControlButton(AppIcons.Forward10, tr("Forward 10 s", "Avanti 10 s"), { player.seekForward(); interaction++ }, size = 40)
+                        ControlButton(AppIcons.Forward10, tr("Forward 10 s", "Avanti 10 s"), { player.seekForward(); interaction++ }, size = 40, spin = 40f)
                     }
                 }
 
@@ -548,9 +610,58 @@ private fun ControlButton(
     onClick: () -> Unit,
     tint: Color = Color.White,
     size: Int = 24,
+    /** Rotazione di "scatto" al tocco (±10 s), poi ritorno elastico. */
+    spin: Float = 0f,
 ) {
-    IconButton(onClick = onClick, modifier = Modifier.size((size + 20).dp)) {
-        Icon(icon, description, tint = tint, modifier = Modifier.size(size.dp))
+    val rotation = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    IconButton(
+        onClick = {
+            onClick()
+            if (spin != 0f) scope.launch {
+                rotation.snapTo(spin)
+                rotation.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.45f, stiffness = 300f))
+            }
+        },
+        modifier = Modifier.size((size + 20).dp).pressScale(interaction, 0.85f),
+        interactionSource = interaction,
+    ) {
+        Icon(icon, description, tint = tint, modifier = Modifier.size(size.dp).graphicsLayer { rotationZ = rotation.value })
+    }
+}
+
+/** Arco chiaro sul lato del doppio tocco con i secondi saltati, che sfuma (come YouTube). */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.DoubleTapFlash(side: Int, tick: Int, label: String) {
+    if (tick == 0 || side == 0) return
+    val alpha = remember { androidx.compose.animation.core.Animatable(0f) }
+    val pulse = remember { androidx.compose.animation.core.Animatable(1f) }
+    LaunchedEffect(tick) {
+        launch { pulse.snapTo(0.85f); pulse.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 400f)) }
+        alpha.snapTo(1f)
+        delay(450)
+        alpha.animateTo(0f, tween(300))
+    }
+    val left = side < 0
+    Box(
+        Modifier.align(if (left) Alignment.CenterStart else Alignment.CenterEnd)
+            .fillMaxHeight().fillMaxWidth(0.4f)
+            .graphicsLayer { this.alpha = alpha.value }
+            .clip(
+                if (left) RoundedCornerShape(topEndPercent = 50, bottomEndPercent = 50)
+                else RoundedCornerShape(topStartPercent = 50, bottomStartPercent = 50)
+            )
+            .background(Color.White.copy(alpha = 0.14f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.graphicsLayer { scaleX = pulse.value; scaleY = pulse.value },
+        ) {
+            Icon(if (left) AppIcons.Replay10 else AppIcons.Forward10, null, tint = Color.White, modifier = Modifier.size(32.dp))
+            Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
+        }
     }
 }
 
@@ -613,15 +724,20 @@ private fun Modifier.pointerInputTaps(
     Modifier.pointerInput(Unit) {
         var lastTime = 0L
         var lastX = -1f
+        // Dopo un doppio tocco, ogni altro tocco rapido sullo stesso lato aggiunge 10 s
+        // (come su YouTube), senza dover ripetere il doppio tocco.
+        var seekUntil = 0L
         detectTapGestures(
             onTap = { o ->
                 val now = System.currentTimeMillis()
                 val w = size.width.toFloat()
                 val sameSide = lastX >= 0 && (lastX < w / 2) == (o.x < w / 2)
-                if (now - lastTime < 300 && sameSide) {
+                if (sameSide && (now - lastTime < 300 || now < seekUntil)) {
                     onDoubleTap(o.x, w)
                     lastTime = 0L
+                    seekUntil = now + 700
                 } else {
+                    seekUntil = 0L
                     onTap()
                     lastTime = now
                     lastX = o.x
@@ -707,8 +823,9 @@ private fun RelatedOverlay(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(related.size, key = { related[it].id }) { i ->
-                val v = related[i]
+            val unique = related.distinctBy { it.id }
+            items(unique.size, key = { unique[it].id }) { i ->
+                val v = unique[i]
                 Column(Modifier.width(220.dp).clip(RoundedCornerShape(10.dp)).clickable { onOpen(v) }) {
                     Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Color.DarkGray)) {
                         AsyncImage(v.thumbnailUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())

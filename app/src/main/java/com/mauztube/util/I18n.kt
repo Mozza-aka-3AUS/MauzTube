@@ -27,7 +27,12 @@ object I18n {
     private const val PREFS = "i18n"
     private const val KEY = "language"
 
+    @Volatile private var loaded = false
+
+    /** Legge la lingua una sola volta per processo (lettura su disco: niente ripetizioni). */
     fun init(context: Context) {
+        if (loaded) return
+        loaded = true
         val tag = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         language = AppLanguage.entries.firstOrNull { it.tag == tag } ?: AppLanguage.EN
     }

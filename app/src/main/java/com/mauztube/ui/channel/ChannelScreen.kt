@@ -82,7 +82,7 @@ class ChannelViewModel @Inject constructor(
 
     fun toggleSubscription() {
         val h = _header.value ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             if (subscribed.value) subscriptions.unsubscribe(url)
             else subscriptions.subscribe(url, h.name, h.avatarUrl)
         }

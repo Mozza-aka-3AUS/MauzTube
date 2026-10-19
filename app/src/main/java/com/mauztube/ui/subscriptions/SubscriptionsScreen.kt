@@ -79,8 +79,8 @@ class SubscriptionsViewModel @Inject constructor(
 
     init {
         // Allinea le iscrizioni con l'account (al massimo ogni 30 minuti).
-        viewModelScope.launch { subscriptionRepo.sync() }
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { subscriptionRepo.sync() }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             combine(
                 subscriptionRepo.subscriptions.map { list -> list.map { it.channelUrl }.toSet() }.distinctUntilChanged(),
                 loggedIn,
@@ -94,8 +94,8 @@ class SubscriptionsViewModel @Inject constructor(
 
     fun pullToRefresh() {
         feed.refresh()
-        if (loggedIn.value) viewModelScope.launch { subscriptionRepo.sync(force = true) }
-        if (!loggedIn.value) viewModelScope.launch {
+        if (loggedIn.value) viewModelScope.launch(com.mauztube.util.SafeHandler) { subscriptionRepo.sync(force = true) }
+        if (!loggedIn.value) viewModelScope.launch(com.mauztube.util.SafeHandler) {
             refreshStale(subscriptionRepo.all().map { it.channelUrl }, maxAgeMs = 10 * 60 * 1000L)
         }
     }

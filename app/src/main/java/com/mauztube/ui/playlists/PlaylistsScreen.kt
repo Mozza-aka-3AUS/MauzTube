@@ -83,14 +83,14 @@ class PlaylistsViewModel @Inject constructor(
     val remote: StateFlow<List<InnerTubeParser.PlaylistRef>> = _remote
 
     init {
-        viewModelScope.launch { ratings.syncLikedFromAccount() }
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) { ratings.syncLikedFromAccount() }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             library.syncFromAccount()
             _remote.value = runCatching { playlists.accountPlaylists() }.getOrDefault(emptyList())
         }
     }
 
-    fun create(name: String) = viewModelScope.launch { playlists.create(name) }
+    fun create(name: String) = viewModelScope.launch(com.mauztube.util.SafeHandler) { playlists.create(name) }
 }
 
 /** Sezione Playlist: "Guarda più tardi", playlist locali e playlist dell'account. */
@@ -140,11 +140,11 @@ fun PlaylistsScreen(
         }
         item {
             Row(
-                Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 16.dp),
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(tr("Your playlists", "Le tue playlist"), style = MaterialTheme.typography.titleMedium)
+                Text(tr("Your playlists", "Le tue playlist"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 FilledTonalButton(onClick = { creating = true }) {
                     Icon(Icons.Default.Add, null)
                     Text(tr("New", "Nuova"))

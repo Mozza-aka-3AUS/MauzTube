@@ -87,7 +87,7 @@ class PlayerViewModel @Inject constructor(
     fun toggleSubscription() {
         val d = details() ?: return
         val url = d.uploaderUrl ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
             if (subscribed.value) subscriptions.unsubscribe(url)
             else subscriptions.subscribe(url, d.uploaderName, d.uploaderAvatarUrl)
         }

@@ -169,7 +169,12 @@ class YouTubeRepository @Inject constructor(
 
     // ---------------- Video (con cache e prefetch) ----------------
 
-    private class Entry(val result: Deferred<VideoDetails>, val createdAt: Long)
+    private class Entry(
+        val result: Deferred<VideoDetails>,
+        val createdAt: Long,
+        /** Precaricamento non ancora iniziato (in attesa del suo turno). */
+        val waiting: java.util.concurrent.atomic.AtomicBoolean,
+    )
 
     private val cache = object : LinkedHashMap<String, Entry>(32, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>) = size > CACHE_SIZE
@@ -181,6 +186,45 @@ class YouTubeRepository @Inject constructor(
      */
     suspend fun videoDetails(videoId: String, forceRefresh: Boolean = false): VideoDetails =
         entryFor(videoId, forceRefresh, prefetch = false).await()
+
+    /** Estrazione completa come lavoro in corso (per avviare il video prima che finisca). */
+    fun videoDetailsAsync(videoId: String, forceRefresh: Boolean = false): Deferred<VideoDetails> =
+        entryFor(videoId, forceRefresh, prefetch = false)
+
+    /**
+     * Dettagli riproducibili dalla sola risposta visionOS dell'estrazione in corso (vedi
+     * [com.mauztube.data.extractor.EarlyPlayerHub]). Null se quella risposta non basta
+     * (video non riproducibile, live, formati da decifrare…): si aspetta l'estrazione completa.
+     * Gli URL sono costruiti come fa NewPipeExtractor per lo stesso client: URL diretto + cpn.
+     */
+    suspend fun earlyDetails(
+        videoId: String,
+        early: Deferred<com.mauztube.data.extractor.EarlyPlayerHub.Early>,
+    ): VideoDetails? {
+        val e = early.await()
+        return withContext(Dispatchers.Default) {
+            runCatching {
+                val root = kotlinx.serialization.json.Json.parseToJsonElement(e.responseBody)
+                    as? kotlinx.serialization.json.JsonObject ?: return@runCatching null
+                val r = (root["playerResponse"] as? kotlinx.serialization.json.JsonObject) ?: root
+                val status = (r["playabilityStatus"] as? kotlinx.serialization.json.JsonObject)
+                    ?.get("status")?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                if (status != "OK") return@runCatching null
+                val vd = r["videoDetails"] as? kotlinx.serialization.json.JsonObject ?: return@runCatching null
+                fun flag(k: String) = (vd[k] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+                if ((vd["videoId"] as? kotlinx.serialization.json.JsonPrimitive)?.content != videoId) return@runCatching null
+                if (flag("isLive") || flag("isUpcoming") || flag("isLiveContent")) return@runCatching null
+                com.mauztube.data.innertube.PlayerResponses.toDetails(videoId, r) { f ->
+                    val url = (f["url"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    // Senza URL diretto (firma cifrata) o con il parametro "n" da decifrare non si
+                    // anticipa: ci pensa l'estrazione completa.
+                    url?.takeIf { "&n=" !in it && "?n=" !in it }?.let { "$it&cpn=${e.cpn}" }
+                }?.let { d ->
+                    d.copy(subtitles = selectSubtitles(d.subtitles))
+                }
+            }.onFailure { Log.w(TAG, "Partenza anticipata non disponibile", it) }.getOrNull()
+        }
+    }
 
     /** Estrae in background i primi [max] video della lista, se la rete non è a consumo. */
     fun prefetch(videoIds: List<String>, max: Int = 3, evenIfMetered: Boolean = false) {
@@ -196,12 +240,17 @@ class YouTubeRepository @Inject constructor(
             val usable = current != null && !forceRefresh &&
                 now - current.createdAt < CACHE_TTL_MS &&
                 !(current.result.isCompleted && current.result.getCompletionExceptionOrNull() != null)
-            if (usable) return current.result
+            // Se l'utente apre un video il cui precaricamento è ancora in coda dietro ad altri,
+            // non lo si aspetta: si estrae subito (e il precaricamento in coda si annulla).
+            val promote = usable && !prefetch && current.waiting.get()
+            if (usable && !promote) return current.result
+            if (promote) current.result.cancel()
 
+            val waiting = java.util.concurrent.atomic.AtomicBoolean(prefetch)
             val job = appScope.async(Dispatchers.IO) {
-                if (prefetch) prefetchGate.withPermit { extract(videoId) } else extract(videoId)
+                if (prefetch) prefetchGate.withPermit { waiting.set(false); extract(videoId) } else extract(videoId)
             }
-            cache[videoId] = Entry(job, now)
+            cache[videoId] = Entry(job, now, waiting)
             job
         }
 
@@ -276,9 +325,8 @@ class YouTubeRepository @Inject constructor(
     }
 
     /**
-     * Ogni traccia sottotitoli viene scaricata quando il player si prepara: se ne tengono
-     * al massimo [MAX_SUBTITLES] per non rallentare l'avvio. Priorità: lingua del dispositivo,
-     * inglese, poi le automatiche nella lingua originale del video.
+     * Tracce offerte nel menu CC (si scarica solo quella scelta, vedi SubtitleLoader).
+     * Ordine: lingua dell'app, inglese, poi le automatiche nella lingua originale del video.
      */
     private fun selectSubtitles(all: List<SubtitleOption>): List<SubtitleOption> {
         val device = com.mauztube.util.I18n.language.tag
@@ -327,6 +375,6 @@ class YouTubeRepository @Inject constructor(
         const val TAG = "YouTubeRepository"
         const val CACHE_SIZE = 30
         const val CACHE_TTL_MS = 30 * 60 * 1000L
-        const val MAX_SUBTITLES = 4
+        const val MAX_SUBTITLES = 30
     }
 }

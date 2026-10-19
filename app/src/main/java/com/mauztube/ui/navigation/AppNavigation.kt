@@ -5,6 +5,11 @@ import com.mauztube.util.tr
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.navigation.NavBackStackEntry
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -16,6 +21,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -80,13 +87,18 @@ import com.mauztube.util.DeepLink
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 
-private data class TopLevel(val route: Any, private val en: String, private val it: String, val icon: ImageVector) {
+private data class TopLevel(
+    val route: Any, private val en: String, private val it: String, val icon: ImageVector,
+    private val shortEn: String = en, private val shortIt: String = it,
+) {
     val label: String get() = tr(en, it)
+    /** Etichetta per barre strette (telefoni piccoli o caratteri ingranditi). */
+    val shortLabel: String get() = tr(shortEn, shortIt)
 }
 
 private val TOP_LEVEL = listOf(
     TopLevel(HomeRoute, "Home", "Home", Icons.Default.Home),
-    TopLevel(SubscriptionsRoute, "Subscriptions", "Iscrizioni", AppIcons.Subscriptions),
+    TopLevel(SubscriptionsRoute, "Subscriptions", "Iscrizioni", AppIcons.Subscriptions, shortEn = "Subs"),
     TopLevel(PlaylistsRoute, "Playlists", "Playlist", AppIcons.Library),
     TopLevel(HistoryRoute, "History", "Cronologia", AppIcons.History),
     TopLevel(SettingsRoute, "Settings", "Impostazioni", Icons.Default.Settings),
@@ -99,8 +111,49 @@ fun NavHostController.openVideo(videoId: String, resume: Boolean = false, startS
     launchSingleTop = true
 }
 
-/** Transizioni brevi: la navigazione risponde subito (il default di Navigation è 700 ms). */
-private const val NAV_ANIM_MS = 140
+// ---------------- Transizioni di navigazione ----------------
+// Brevi (≤ 260 ms, il default di Navigation è 700 ms) e solo con trasparenza, scala e
+// traslazione: vengono applicate dalla GPU senza rimisurare le schermate.
+
+private val Emphasized = androidx.compose.animation.core.CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+private fun <T> enterSpec(ms: Int = 240) = tween<T>(ms, easing = Emphasized)
+private fun <T> exitSpec(ms: Int = 160) = tween<T>(ms, easing = androidx.compose.animation.core.FastOutLinearInEasing)
+
+private fun NavBackStackEntry.isPlayer() = destination.hasRoute(PlayerRoute::class)
+private fun NavBackStackEntry.isTopLevel() = TOP_LEVEL.any { destination.hasRoute(it.route::class) }
+
+private typealias NavScope = androidx.compose.animation.AnimatedContentTransitionScope<NavBackStackEntry>
+
+private fun NavScope.navEnter(): androidx.compose.animation.EnterTransition = when {
+    // Il video sale dal basso, come quando si tocca una miniatura su YouTube.
+    targetState.isPlayer() && !initialState.isPlayer() ->
+        slideInVertically(enterSpec(260)) { it / 5 } + fadeIn(enterSpec(200))
+    targetState.isPlayer() -> fadeIn(enterSpec(180))
+    // Cambio di scheda: dissolvenza con un leggero ingrandimento ("fade through").
+    targetState.isTopLevel() && initialState.isTopLevel() ->
+        fadeIn(tween(200, delayMillis = 50)) + androidx.compose.animation.scaleIn(enterSpec(240), initialScale = 0.96f)
+    // Schermata successiva: entra da destra di poco.
+    else -> slideInHorizontally(enterSpec()) { it / 12 } + fadeIn(enterSpec(200))
+}
+
+private fun NavScope.navExit(): androidx.compose.animation.ExitTransition = when {
+    // Sotto al video che sale, la schermata resta ferma (niente lavoro inutile).
+    targetState.isPlayer() && !initialState.isPlayer() -> androidx.compose.animation.ExitTransition.KeepUntilTransitionsFinished
+    targetState.isTopLevel() && initialState.isTopLevel() -> fadeOut(tween(90))
+    else -> slideOutHorizontally(exitSpec()) { -it / 24 } + fadeOut(exitSpec())
+}
+
+private fun NavScope.navPopEnter(): androidx.compose.animation.EnterTransition = when {
+    initialState.isPlayer() && !targetState.isPlayer() -> androidx.compose.animation.EnterTransition.None
+    else -> slideInHorizontally(enterSpec()) { -it / 24 } + fadeIn(enterSpec(200))
+}
+
+private fun NavScope.navPopExit(): androidx.compose.animation.ExitTransition = when {
+    // Chiudendo il video, scende verso il mini player.
+    initialState.isPlayer() && !targetState.isPlayer() ->
+        slideOutVertically(exitSpec(200)) { it / 4 } + fadeOut(exitSpec(200))
+    else -> slideOutHorizontally(exitSpec()) { it / 12 } + fadeOut(exitSpec())
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -143,9 +196,24 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
     val onPlayerRoute = destination?.hasRoute(PlayerRoute::class) == true
     LaunchedEffect(onPlayerRoute) { if (!onPlayerRoute) app.playback.setFullscreen(false) }
 
+    // Adattamento allo schermo: schede a sinistra (rail) quando lo schermo è largo
+    // (orizzontale, pieghevoli, tablet); etichette brevi se ogni scheda ha poco spazio.
+    val window = com.mauztube.ui.components.windowSize()
+    val useRail = window.wide
+    val narrowNav = window.widthDp / 5f / window.fontScale.coerceAtLeast(1f) < 76f
+
     fun goHomeOrTop() {
         if (destination?.hasRoute(HomeRoute::class) == true) homeScrollToTop.tryEmit(Unit)
         else nav.navigate(HomeRoute) {
+            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    fun openTopLevel(item: TopLevel) {
+        if (item.route == HomeRoute) goHomeOrTop()
+        else nav.navigate(item.route) {
             popUpTo(nav.graph.findStartDestination().id) { saveState = true }
             launchSingleTop = true
             restoreState = true
@@ -188,30 +256,16 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
                 }
             },
             bottomBar = {
-                if (topLevel != null) {
+                if (topLevel != null && !useRail) {
                     NavigationBar {
                         TOP_LEVEL.forEach { item ->
                             NavigationBarItem(
                                 selected = item == topLevel,
-                                onClick = {
-                                    if (item.route == HomeRoute) goHomeOrTop()
-                                    else nav.navigate(item.route) {
-                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
+                                onClick = { openTopLevel(item) },
                                 icon = { Icon(item.icon, item.label) },
-                                // Etichette lunghe ("Subscriptions") si rimpiccioliscono invece di essere tagliate.
-                                label = {
-                                    Text(
-                                        item.label,
-                                        maxLines = 1,
-                                        autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
-                                            minFontSize = 9.sp, maxFontSize = 12.sp,
-                                        ),
-                                    )
-                                },
+                                // Etichette lunghe si rimpiccioliscono; se lo spazio è poco si usa
+                                // la forma breve ("Subs") invece di tagliarle.
+                                label = { NavLabel(if (narrowNav) item.shortLabel else item.label) },
                             )
                         }
                     }
@@ -221,7 +275,25 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
             val fullscreen by app.playback.fullscreen.collectAsStateWithLifecycle()
             // A schermo intero il player usa TUTTO il display (anche la zona del foro della
             // fotocamera): nessun margine della Scaffold esterna.
-            Box(Modifier.padding(if (fullscreen) androidx.compose.foundation.layout.PaddingValues(0.dp) else padding).fillMaxSize()) {
+            Row(Modifier.padding(if (fullscreen) androidx.compose.foundation.layout.PaddingValues(0.dp) else padding).fillMaxSize()) {
+            if (useRail && topLevel != null && !fullscreen) {
+                // Schermi bassi (telefono in orizzontale): etichetta solo sulla scheda attiva;
+                // in ogni caso la colonna scorre, così nessuna scheda resta irraggiungibile.
+                androidx.compose.material3.NavigationRail(
+                    Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                ) {
+                    TOP_LEVEL.forEach { item ->
+                        androidx.compose.material3.NavigationRailItem(
+                            selected = item == topLevel,
+                            onClick = { openTopLevel(item) },
+                            icon = { Icon(item.icon, item.label) },
+                            label = { NavLabel(item.label) },
+                            alwaysShowLabel = window.heightDp >= 520f,
+                        )
+                    }
+                }
+            }
+            Box(Modifier.weight(1f).fillMaxHeight()) {
                 Column(Modifier.fillMaxSize()) {
                 // Avviso della modalità anonimo, sotto la barra in alto.
                 androidx.compose.animation.AnimatedVisibility(
@@ -251,10 +323,10 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
                     nav,
                     startDestination = HomeRoute,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    enterTransition = { fadeIn(tween(NAV_ANIM_MS)) },
-                    exitTransition = { fadeOut(tween(NAV_ANIM_MS)) },
-                    popEnterTransition = { fadeIn(tween(NAV_ANIM_MS)) },
-                    popExitTransition = { fadeOut(tween(NAV_ANIM_MS)) },
+                    enterTransition = { navEnter() },
+                    exitTransition = { navExit() },
+                    popEnterTransition = { navPopEnter() },
+                    popExitTransition = { navPopExit() },
                 ) {
                     val openChannel: (String) -> Unit = { nav.navigate(ChannelRoute(it)) }
                     val openVideo: (String) -> Unit = { nav.openVideo(it) }
@@ -331,6 +403,7 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
                     }
                 }
             }
+            }
         }
 
         if (queueOpen) QueueSheet(app.playback, onDismiss = { queueOpen = false })
@@ -340,6 +413,7 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
         if (com.mauztube.LocalInPip.current) {
             Box(Modifier.fillMaxSize().background(Color.Black)) {
                 com.mauztube.ui.player.VideoView(app.playback.player, Modifier.fillMaxSize(), pipSurface = true)
+                com.mauztube.ui.player.SubtitleOverlay(app.playback, raised = false, large = false, modifier = Modifier.align(Alignment.BottomCenter))
             }
             return@CompositionLocalProvider
         }
@@ -368,4 +442,16 @@ private fun Logo(onClick: () -> Unit) {
         Spacer(Modifier.width(6.dp))
         Text("MauzTube", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     }
+}
+
+/** Etichetta di una scheda: una riga, rimpicciolita se serve (mai tagliata a metà parola). */
+@Composable
+private fun NavLabel(text: String) {
+    Text(
+        text,
+        maxLines = 1,
+        softWrap = false,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 12.sp),
+    )
 }
