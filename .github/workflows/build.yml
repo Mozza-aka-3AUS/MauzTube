@@ -51,7 +51,7 @@ jobs:
       # ---- Release ottimizzata firmata con la chiave di debug (senza keystore personale) ----
       - name: Build release APK (chiave di debug)
         if: env.HAS_KEYSTORE != 'true'
-        run: ./gradlew assembleRelease --stacktrace
+        run: ./gradlew assembleRelease -PdebugSign --stacktrace
 
       - name: Upload release APK (chiave di debug)
         if: env.HAS_KEYSTORE != 'true'

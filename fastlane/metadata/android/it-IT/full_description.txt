@@ -1,0 +1,24 @@
+MauzTube è un client YouTube leggero e non ufficiale, pensato per velocità e privacy.
+
+<b>Funzioni</b>
+<ul>
+<li>Niente pubblicità: vengono richiesti solo i flussi video, gli annunci non vengono mai scaricati</li>
+<li>SponsorBlock: sponsor, intro e promemoria saltati automaticamente, con annullamento</li>
+<li>Niente Shorts, ovunque: home, ricerca, canali, iscrizioni e video correlati</li>
+<li>Riproduzione in background e a schermo spento, popup (picture-in-picture) e mini player</li>
+<li>Ripresa esatta di ogni video, coda, riproduzione automatica e ripetizione</li>
+<li>Commenti con risposte, cronologia ricerche, modalità anonimo</li>
+<li>Sottotitoli, velocità, qualità minima/massima, modalità solo audio</li>
+<li>Download: video MP4 (uniti senza ricodifica) e audio MP3/M4A</li>
+<li>Consigliati calcolati sul telefono, senza account</li>
+<li>Account Google facoltativo: consigliati, iscrizioni, cronologia, playlist e commenti del tuo profilo</li>
+<li>Material You, tema scuro/chiaro, italiano e inglese</li>
+<li>Si adatta a ogni schermo: telefoni piccoli, caratteri grandi, orizzontale, pieghevoli e tablet</li>
+</ul>
+
+<b>Privacy</b>
+Nessuna statistica, nessun tracciamento, nessuna libreria Google. Tutto resta sul telefono. L'app si collega solo a YouTube/Google, a SponsorBlock (viene inviato solo un breve prefisso dell'hash dell'ID del video) e, se attivato, a Return YouTube Dislike.
+
+L'estrazione dei video è basata su NewPipeExtractor.
+
+MauzTube non è affiliato, approvato o sponsorizzato da YouTube o Google. Solo per uso personale e non commerciale: i dati di SponsorBlock sono concessi con licenza CC BY-NC-SA 4.0.

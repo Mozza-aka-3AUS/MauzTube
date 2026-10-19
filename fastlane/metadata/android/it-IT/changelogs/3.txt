@@ -1,0 +1,1 @@
+Prima versione firmata con la chiave definitiva di MauzTube. Chi ha la 1.0/1.0.1 deve disinstallarla una volta prima di installare questa (cambio di firma una tantum); gli aggiornamenti successivi si installano normalmente.

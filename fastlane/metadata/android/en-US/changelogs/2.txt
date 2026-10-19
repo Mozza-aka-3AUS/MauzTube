@@ -1,0 +1,1 @@
+Faster video start, subtitles no longer delay playback, more reliable network, adaptive layout for every screen, smoother scrolling, new animations and several crash fixes.

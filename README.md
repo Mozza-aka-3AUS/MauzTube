@@ -8,6 +8,11 @@ Lightweight, ad-free YouTube client for Android with SponsorBlock, no Shorts, ba
 > Licensed under the [GNU GPL v3.0](LICENSE). See the [Legal](#legal) section below.
 
 **Download:** the latest APK is on the [Releases](../../releases) page (Android 7.0 or later).
+Since **1.0.2** releases are signed with the permanent MauzTube key (SHA-256
+`42:40:EA:9B:AF:E6:78:66:E0:3B:B3:C3:8F:8F:F8:AF:8F:D0:05:35:1E:8C:35:2B:84:7E:53:D4:EB:C1:57:A9`).
+If you installed 1.0 or 1.0.1, uninstall it once before installing 1.0.2: later updates install
+normally. Store listing (description, screenshots, changelogs) is in `fastlane/metadata/android/`,
+the format used by F-Droid and IzzyOnDroid.
 
 Kotlin · Jetpack Compose · Media3/ExoPlayer · NewPipeExtractor · Room · DataStore · Hilt · MVVM
 
@@ -374,7 +379,7 @@ small notification icon.
 ### Without building locally (GitHub Actions)
 1. Fork the repository (or push the project to your own GitHub repository).
 2. **Actions → Build APK →** the latest run **→ Artifacts → `MauzTube-release-debugkey-…`**
-   (or `MauzTube-debug-…`).
+   (or `MauzTube-debug-…`). Forks without the keystore secrets get the debug-signed release.
 3. Unzip it and install the APK (allow "Install unknown apps").
 
 ### Locally
@@ -406,6 +411,11 @@ installed next to the release.
    `KEY_ALIAS` and `KEY_PASSWORD` to the repository Secrets. The workflow will also produce the
    `MauzTube-release-…` artifact.
 
+Without a keystore, `assembleRelease` produces an **unsigned** APK
+(`app-release-unsigned.apk`), which is what F-Droid expects. Add `-PdebugSign` to sign it with the
+debug key instead, e.g. to install a fork right away. The APK contains no "dependency metadata"
+block (`dependenciesInfo` is disabled), as required by F-Droid and IzzyOnDroid.
+
 Alternatively you can sign the unsigned APK by hand:
 ```bash
 zipalign -p 4 app-release-unsigned.apk aligned.apk
@@ -421,8 +431,9 @@ apksigner sign --ks mauztube-release.jks --out MauzTube.apk aligned.apk
   YouTube can block IPs or accounts, including the Google account used to sign in.
 - NewPipeExtractor is **GPL-3.0**: if you distribute the APK, MauzTube must also be distributed
   under GPL-3.0 together with its source code.
-- No Play Store: Google removes alternative YouTube clients. Distribute the APK directly (or
-  through F-Droid / a personal repository).
+- No Play Store: Google removes alternative YouTube clients. Distribute the APK directly or
+  through F-Droid / IzzyOnDroid (with the *NonFreeNet* anti-feature, because the app depends on
+  YouTube).
 
 **Maintenance**
 - YouTube often changes its anti-scraping mechanisms (signature cipher, `n` parameter,

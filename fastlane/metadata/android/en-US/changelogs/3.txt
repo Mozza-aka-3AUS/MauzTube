@@ -1,0 +1,1 @@
+First release signed with the permanent MauzTube key. Users of 1.0/1.0.1 must uninstall once before installing this version (one-time change of signature); later updates install normally.

@@ -25,8 +25,8 @@ android {
         applicationId = "com.mauztube"
         minSdk = 24
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
         vectorDrawables.useSupportLibrary = true
     }
 
@@ -60,10 +60,19 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Senza keystore personale la release viene firmata con la chiave di debug: è comunque
-            // un APK ottimizzato (R8, non debuggable), molto più fluido della build debug.
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // Firma: keystore personale se configurato. Altrimenti l'APK resta NON firmato (è ciò
+            // che serve a F-Droid, che lo firma da sé); con -PdebugSign si firma con la chiave di
+            // debug, per chi compila un fork senza keystore e vuole installarlo subito.
+            signingConfig = signingConfigs.findByName("release")
+                ?: if (project.hasProperty("debugSign")) signingConfigs.getByName("debug") else null
         }
+    }
+
+    // Niente blocco "dependency metadata" nell'APK: è cifrato con una chiave di Google, non
+    // verificabile, e F-Droid / IzzyOnDroid lo rifiutano.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     compileOptions {
