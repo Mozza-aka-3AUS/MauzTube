@@ -36,6 +36,7 @@ class MauzTubeApp : Application(), SingletonImageLoader.Factory {
         }
         com.mauztube.util.CrashLog.install(this)
         com.mauztube.util.DeviceProfile.init(this)
+        com.mauztube.util.Feedback.init(this)
         I18n.init(this)
         val locale = Locale.getDefault()
         NewPipe.init(

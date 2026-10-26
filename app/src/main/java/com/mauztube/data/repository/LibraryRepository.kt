@@ -1,5 +1,6 @@
 package com.mauztube.data.repository
 
+import com.mauztube.util.tr
 import android.util.Log
 import com.mauztube.data.account.AccountManager
 import com.mauztube.data.local.WatchLaterDao
@@ -35,13 +36,20 @@ class LibraryRepository @Inject constructor(
 
     fun toggleWatchLater(video: VideoItem) {
         val add = video.id !in watchLaterIds.value
+        com.mauztube.util.Feedback.show(
+            if (add) tr("Saved to Watch later", "Salvato in Guarda più tardi")
+            else tr("Removed from Watch later", "Rimosso da Guarda più tardi")
+        )
         appScope.launch {
             if (add) dao.upsert(video.toWatchLater()) else dao.delete(video.id)
             if (account.loggedIn.value) {
                 runCatching {
                     if (add) recommendations.addToWatchLater(video.id)
                     else recommendations.removeFromWatchLater(video.id)
-                }.onFailure { Log.w(TAG, "Sincronizzazione WL fallita", it) }
+                }.onFailure {
+                    Log.w(TAG, "Sincronizzazione WL fallita", it)
+                    com.mauztube.util.Feedback.show(tr("Couldn't update Watch later on your Google account", "Impossibile aggiornare Guarda più tardi sull'account Google"))
+                }
             }
         }
     }

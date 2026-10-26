@@ -62,6 +62,7 @@ class SettingsViewModel @Inject constructor(
     val repo: SettingsRepository,
     val account: AccountManager,
     private val searchHistory: com.mauztube.data.repository.SearchHistoryRepository,
+    private val playlists: com.mauztube.data.repository.PlaylistRepository,
 ) : ViewModel() {
     fun clearSearchHistory() = viewModelScope.launch(com.mauztube.util.SafeHandler) { searchHistory.clear() }
 
@@ -85,7 +86,10 @@ class SettingsViewModel @Inject constructor(
     /** All'uscita si azzera la fusione iscrizioni: un nuovo account riceverà quelle locali. */
     fun logout() {
         account.logout()
-        viewModelScope.launch(com.mauztube.util.SafeHandler) { repo.setSubscriptionsMerged(false) }
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
+            repo.setSubscriptionsMerged(false)
+            playlists.forgetAccountLinks()
+        }
     }
 
     fun update(block: suspend SettingsRepository.() -> Unit) {

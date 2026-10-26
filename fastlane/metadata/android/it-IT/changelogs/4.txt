@@ -1,0 +1,1 @@
+Corretti gli errori di riproduzione (HTTP 403) sulle reti IPv6. Nuovo tasto Salva nel player per aggiungere i video a qualsiasi playlist; playlist sincronizzate con l'account Google. Messaggi di conferma quando si salva in Guarda più tardi o in una playlist.

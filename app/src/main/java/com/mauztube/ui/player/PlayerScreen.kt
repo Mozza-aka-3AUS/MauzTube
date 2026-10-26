@@ -342,6 +342,21 @@ private fun Details(
                         onClick = onToggleWatchLater,
                     )
                 }
+                // Salva in qualsiasi playlist (del telefono e dell'account).
+                item {
+                    val actions = com.mauztube.ui.components.LocalVideoActions.current
+                    ActionPill(AppIcons.PlaylistAdd, tr("Save", "Salva"), onClick = {
+                        actions?.saveToPlaylist(
+                            com.mauztube.data.model.VideoItem(
+                                id = d.id, url = d.url, title = d.title, uploaderName = d.uploaderName,
+                                uploaderUrl = d.uploaderUrl, thumbnailUrl = d.thumbnailUrl,
+                                durationSeconds = d.durationSeconds, viewCount = d.viewCount,
+                                textualUploadDate = d.textualUploadDate, uploadedAtMillis = d.uploadedAtMillis,
+                                isLive = d.isLive,
+                            )
+                        )
+                    })
+                }
                 item { ActionPill(AppIcons.PictureInPicture, tr("Pop-up", "Popup"), onClick = onPip) }
                 item { ActionPill(Icons.Default.Share, tr("Share", "Condividi"), onClick = { onShare(false) }) }
                 item { ActionPill(Icons.Default.Share, tr("From current time", "Dal minuto attuale"), onClick = { onShare(true) }) }

@@ -56,22 +56,35 @@ class AppViewModel @Inject constructor(
 
     init {
         // Con l'account collegato le iscrizioni vengono allineate a ogni avvio/login.
-        viewModelScope.launch(com.mauztube.util.SafeHandler) { account.loggedIn.collect { if (it) subscriptions.sync() } }
+        // ...e le playlist del telefono ricevono la loro copia nell'account.
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
+            account.loggedIn.collect { if (it) { subscriptions.sync(); playlists.syncLocalToAccount() } }
+        }
     }
 
     // ---- Finestra "Salva in playlist" ----
     private val _playlistTarget = MutableStateFlow<VideoItem?>(null)
     val playlistTarget: StateFlow<VideoItem?> = _playlistTarget
 
-    private val _accountPlaylists = MutableStateFlow<List<InnerTubeParser.PlaylistRef>>(emptyList())
-    val accountPlaylists: StateFlow<List<InnerTubeParser.PlaylistRef>> = _accountPlaylists
+    /** Playlist dell'account (create su YouTube) con lo stato del video aperto nella finestra. */
+    private val _accountOptions = MutableStateFlow<List<InnerTubeParser.PlaylistOption>>(emptyList())
+    val accountOptions: StateFlow<List<InnerTubeParser.PlaylistOption>> = _accountOptions
+    private val _accountLoading = MutableStateFlow(false)
+    val accountLoading: StateFlow<Boolean> = _accountLoading
 
     val localPlaylists = playlists.playlists.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     override fun saveToPlaylist(video: VideoItem) {
         _playlistTarget.value = video
-        if (account.loggedIn.value && _accountPlaylists.value.isEmpty()) {
-            viewModelScope.launch(com.mauztube.util.SafeHandler) { _accountPlaylists.value = runCatching { playlists.accountPlaylists() }.getOrDefault(emptyList()) }
+        _accountOptions.value = emptyList()
+        if (account.loggedIn.value) {
+            _accountLoading.value = true
+            viewModelScope.launch(com.mauztube.util.SafeHandler) {
+                _accountOptions.value = runCatching { playlists.accountOptions(video.id) }
+                    .onFailure { android.util.Log.w("AppViewModel", "Playlist dell'account non disponibili", it) }
+                    .getOrDefault(emptyList())
+                _accountLoading.value = false
+            }
         }
     }
 
@@ -84,8 +97,20 @@ class AppViewModel @Inject constructor(
         if (contained) playlists.remove(playlistId, video.id) else playlists.add(playlistId, video)
     }
 
-    fun addToAccountPlaylist(playlistId: String, video: VideoItem) = viewModelScope.launch(com.mauztube.util.SafeHandler) {
-        runCatching { playlists.addToAccountPlaylist(playlistId, video) }
+    /** Aggiunge/toglie il video da una playlist dell'account; la casella cambia subito. */
+    fun toggleAccountPlaylist(option: InnerTubeParser.PlaylistOption, video: VideoItem) {
+        val add = !option.containsVideo
+        fun set(contains: Boolean) {
+            _accountOptions.value = _accountOptions.value.map {
+                if (it.playlistId == option.playlistId) it.copy(containsVideo = contains) else it
+            }
+        }
+        set(add)
+        viewModelScope.launch(com.mauztube.util.SafeHandler) {
+            val ok = if (add) playlists.addToAccountPlaylist(option.playlistId, option.title, video)
+            else playlists.removeFromAccountPlaylist(option.playlistId, option.title, video.id)
+            if (!ok) set(!add)
+        }
     }
 
     fun createPlaylistWith(name: String, video: VideoItem) = viewModelScope.launch(com.mauztube.util.SafeHandler) {

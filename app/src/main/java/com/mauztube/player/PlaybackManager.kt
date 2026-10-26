@@ -322,6 +322,7 @@ class PlaybackManager @Inject constructor(
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "Errore di riproduzione", error)
             if (recoverFromDecoderError(error)) return
+            recordPlaybackError(error)
             // Gli URL googlevideo scadono (~6 h): un tentativo automatico di ri-estrazione.
             if (!autoRetried) {
                 autoRetried = true
@@ -331,6 +332,30 @@ class PlaybackManager @Inject constructor(
                 setState(PlayerUiState.Error(tr("Playback error: ${error.errorCodeName}", "Errore di riproduzione: ${error.errorCodeName}"), retryable = true))
             }
         }
+    }
+
+    /**
+     * Errori di rete della riproduzione nel rapporto errori (Impostazioni), con i soli dati utili
+     * a capirne la causa: codice HTTP, server, client InnerTube e formato. Niente URL completi.
+     */
+    private fun recordPlaybackError(error: PlaybackException) {
+        var cause: Throwable? = error
+        var http: androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException? = null
+        while (cause != null && http == null) {
+            http = cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
+            cause = cause.cause
+        }
+        val uri = http?.dataSpec?.uri
+        val detail = buildString {
+            append("Playback ").append(error.errorCodeName)
+            if (http != null) append(" HTTP ").append(http.responseCode)
+            uri?.host?.let { append(" host=").append(it.substringAfter("---").take(40)) }
+            uri?.getQueryParameter("c")?.let { append(" client=").append(it) }
+            uri?.getQueryParameter("itag")?.let { append(" itag=").append(it) }
+            append(" retry=").append(autoRetried)
+            append(" video=").append(_nowPlaying.value?.videoId)
+        }
+        com.mauztube.util.CrashLog.record(RuntimeException(detail, error), fatal = false)
     }
 
     init {

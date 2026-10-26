@@ -1,0 +1,1 @@
+Fixed playback errors (HTTP 403) on IPv6 networks. New Save button in the player to add videos to any playlist; playlists sync with your Google account. Confirmation messages when saving to Watch later or a playlist.

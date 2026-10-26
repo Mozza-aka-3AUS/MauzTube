@@ -189,6 +189,12 @@ They can be turned on automatically in the app language from Settings.
 
 ### Network resilience
 Mobile networks drop connections, change between Wi-Fi and data, and sometimes have slow DNS.
+- **One address family**: YouTube stream URLs are bound to the IP that requested them (`ip=`).
+  If the player request goes out over IPv6 and the video data over IPv4 (or the other way round)
+  googlevideo answers 403 (`ERROR_CODE_IO_BAD_HTTP_STATUS`). All connections therefore use IPv4
+  when available (Android translates it on IPv6-only mobile networks) and OkHttp's IPv6/IPv4 race
+  ("fast fallback") is disabled, so both requests always leave from the same address. Playback
+  network errors are written to the error report with HTTP code, server and client.
 Measured on a flaky network: requests stuck on a dead pooled connection for **30 s** (the old
 timeout) and DNS lookups failing after 10–17 s.
 - **Shorter timeouts with retry**: extractor API requests give up after 7 s without data and are
@@ -254,7 +260,13 @@ Defaults: **dark** theme, system colours **off**, resume and automatic reopening
   The queue lives in memory only: once the app is closed, it is gone.
 - **Playlists**: "Watch later", local playlists (create, rename, delete, "Play all" and "Add all
   to queue") and, with an account, the Google account's playlists. "Save to playlist" is
-  available from the ⋮ menu and from the player.
+  available from the ⋮ menu and from the **Save** button in the player, and every change shows a
+  short confirmation ("Added to …", "Removed from …").
+- **Playlist sync** with the account: every playlist on the phone gets a private copy on the
+  Google account (created when you sign in, or as soon as the playlist is created), and adding,
+  removing, renaming and deleting are repeated there. Other playlists of the account can be used
+  directly from "Save to playlist", with the real "already in this playlist" state
+  (`playlist/get_add_to_playlist`, the same request as YouTube's own Save dialog).
 - **Subscriptions synced** with the account: subscribing and unsubscribing also applies on
   YouTube. On first sign-in, local subscriptions are added to the account; afterwards the account
   is the source of truth.

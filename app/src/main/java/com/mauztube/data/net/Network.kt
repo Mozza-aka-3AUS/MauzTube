@@ -46,8 +46,17 @@ class CachingDns : Dns {
         }
     }
 
+    /**
+     * Solo IPv4 quando disponibile (IPv6 solo se non c'è altro). Gli URL dei video di YouTube
+     * contengono l'IP che ha fatto la richiesta del player (`ip=`): se quella richiesta parte in
+     * IPv6 e i dati video in IPv4 (o viceversa) googlevideo risponde 403. Con una sola famiglia
+     * di indirizzi le due richieste escono sempre dallo stesso IP. Sulle reti mobili solo IPv6
+     * Android traduce comunque l'IPv4 (464XLAT).
+     */
     private fun resolve(hostname: String): List<InetAddress> =
-        Dns.SYSTEM.lookup(hostname).also {
+        Dns.SYSTEM.lookup(hostname).let { all ->
+            all.filterIsInstance<java.net.Inet4Address>().ifEmpty { all }
+        }.also {
             if (cache.size > MAX_HOSTS) cache.clear()
             cache[hostname] = Entry(it, SystemClock.elapsedRealtime())
         }

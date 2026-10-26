@@ -73,6 +73,39 @@ class InnerTubeClient @Inject constructor(
         }
     }
 
+    /**
+     * Playlist dell'account con lo stato del video (già presente o no): è la stessa richiesta
+     * della finestra "Salva" del sito di YouTube.
+     */
+    suspend fun addToPlaylistOptions(videoId: String): JsonObject =
+        post("playlist/get_add_to_playlist") {
+            putJsonArray("videoIds") { add(videoId) }
+            put("excludeWatchLater", true)
+        }
+
+    /** Crea una playlist privata nell'account con i video indicati; restituisce il suo ID. */
+    suspend fun createPlaylist(title: String, videoIds: List<String>): String? {
+        val r = post("playlist/create") {
+            put("title", title)
+            put("privacyStatus", "PRIVATE")
+            putJsonArray("videoIds") { videoIds.forEach { add(it) } }
+        }
+        return (r["playlistId"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+    }
+
+    suspend fun renamePlaylist(playlistId: String, name: String) {
+        post("browse/edit_playlist") {
+            put("playlistId", playlistId)
+            putJsonArray("actions") {
+                add(buildJsonObject { put("action", "ACTION_SET_PLAYLIST_NAME"); put("playlistName", name) })
+            }
+        }
+    }
+
+    suspend fun deletePlaylist(playlistId: String) {
+        post("playlist/delete") { put("playlistId", playlistId) }
+    }
+
     /** GET autenticato (ping di statistiche per la cronologia). */
     suspend fun authenticatedGet(url: String) = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url)

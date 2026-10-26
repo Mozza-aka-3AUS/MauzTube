@@ -14,6 +14,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -30,39 +32,44 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mauztube.ui.components.AppViewModel
 
-/** Finestra "Salva in playlist": Guarda più tardi, playlist locali, playlist dell'account. */
+/**
+ * Finestra "Salva in playlist": Guarda più tardi, playlist del telefono (con l'account collegato
+ * sono sincronizzate con la loro copia su YouTube) e altre playlist dell'account, ognuna con lo
+ * stato reale del video. Ogni scelta mostra un messaggio di conferma.
+ */
 @Composable
 fun SaveToPlaylistDialog(app: AppViewModel) {
     val video = app.playlistTarget.collectAsStateWithLifecycle().value ?: return
     val wl by app.watchLaterIds.collectAsStateWithLifecycle()
     val local by app.localPlaylists.collectAsStateWithLifecycle()
-    val remote by app.accountPlaylists.collectAsStateWithLifecycle()
+    val remote by app.accountOptions.collectAsStateWithLifecycle()
+    val remoteLoading by app.accountLoading.collectAsStateWithLifecycle()
+    val loggedIn by app.account.loggedIn.collectAsStateWithLifecycle()
     val containing by remember(video.id) { app.playlistsContaining(video.id) }.collectAsStateWithLifecycle()
     var creating by remember { mutableStateOf(false) }
-    val addedRemote = remember(video.id) { mutableStateOf(setOf<String>()) }
 
     AlertDialog(
         onDismissRequest = app::dismissPlaylistDialog,
         title = { Text(tr("Save to playlist", "Salva in playlist")) },
         text = {
-            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                 CheckRow(tr("Watch later", "Guarda più tardi"), video.id in wl) { app.toggleWatchLater(video) }
-                local.forEach { p ->
-                    val inside = p.id in containing
-                    CheckRow(p.name, inside) { app.toggleLocalPlaylist(p.id, video, inside) }
+                if (local.isNotEmpty()) {
+                    SectionLabel(if (loggedIn) tr("Your playlists (synced)", "Le tue playlist (sincronizzate)") else tr("Your playlists", "Le tue playlist"))
+                    local.forEach { p ->
+                        val inside = p.id in containing
+                        CheckRow(p.name, inside) { app.toggleLocalPlaylist(p.id, video, inside) }
+                    }
                 }
-                if (remote.isNotEmpty()) {
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Text(tr("Google account", "Account Google"), style = MaterialTheme.typography.labelLarge)
-                    remote.forEach { p ->
-                        val done = p.playlistId in addedRemote.value
-                        CheckRow(p.title, done) {
-                            if (!done) {
-                                app.addToAccountPlaylist(p.playlistId, video)
-                                addedRemote.value = addedRemote.value + p.playlistId
-                            }
+                if (loggedIn && (remoteLoading || remote.isNotEmpty())) {
+                    SectionLabel(tr("Other playlists on your Google account", "Altre playlist dell'account Google"))
+                    if (remoteLoading) {
+                        Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text(tr("  Loading…", "  Caricamento…"), style = MaterialTheme.typography.bodyMedium)
                         }
                     }
+                    remote.forEach { o -> CheckRow(o.title, o.containsVideo) { app.toggleAccountPlaylist(o, video) } }
                 }
                 Row(
                     Modifier.fillMaxWidth().clickable { creating = true }.padding(vertical = 12.dp),
@@ -70,6 +77,14 @@ fun SaveToPlaylistDialog(app: AppViewModel) {
                 ) {
                     Icon(Icons.Default.Add, null)
                     Text(tr("  New playlist", "  Nuova playlist"))
+                }
+                if (loggedIn) {
+                    Text(
+                        tr("New playlists are also created, private, on your Google account.",
+                            "Le nuove playlist vengono create anche sul tuo account Google, private."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         },
@@ -82,9 +97,15 @@ fun SaveToPlaylistDialog(app: AppViewModel) {
 }
 
 @Composable
+private fun SectionLabel(text: String) {
+    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+    Text(text, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(bottom = 4.dp))
+}
+
+@Composable
 private fun CheckRow(label: String, checked: Boolean, onToggle: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = checked, onCheckedChange = { onToggle() })
-        Text(label, maxLines = 1)
+        Text(label, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }

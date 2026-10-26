@@ -108,6 +108,16 @@ object InnerTubeParser {
         return out.values.filter { it.playlistId != "WL" && it.playlistId != "LL" }.toList()
     }
 
+    data class PlaylistOption(val playlistId: String, val title: String, val containsVideo: Boolean)
+
+    /** Risposta di playlist/get_add_to_playlist: playlist dell'account e presenza del video. */
+    fun parseAddToPlaylist(root: JsonElement): List<PlaylistOption> =
+        root.findAll("playlistAddToOptionRenderer").mapNotNull { o ->
+            val id = o.str("playlistId") ?: return@mapNotNull null
+            val title = o.obj("title")?.text() ?: return@mapNotNull null
+            PlaylistOption(id, title, o.str("containsSelectedVideos") == "ALL")
+        }.filter { it.playlistId != "WL" && it.playlistId != "LL" }.distinctBy { it.playlistId }
+
     /** Stato "mi piace" dell'account nella risposta /next (likeStatusEntity / likeStatus). */
     fun likeStatus(root: JsonElement): Int? {
         var found: String? = null

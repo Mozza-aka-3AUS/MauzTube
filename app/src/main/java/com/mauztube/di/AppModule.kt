@@ -47,6 +47,8 @@ object AppModule {
         // Al cambio di rete il pool viene svuotato (NetworkWatcher).
         .connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
         .dns(dns)
+        // Niente "gara" IPv6/IPv4 a ogni connessione: vedi CachingDns (URL legati all'IP).
+        .fastFallback(false)
         // Una connessione bloccata non deve fermare tutto per 30 s (default precedente):
         // dopo 15 s senza dati la richiesta fallisce e chi la usa riprova su una connessione nuova.
         .connectTimeout(10, TimeUnit.SECONDS)
