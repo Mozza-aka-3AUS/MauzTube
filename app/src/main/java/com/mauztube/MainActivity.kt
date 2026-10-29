@@ -127,7 +127,9 @@ class MainActivity : ComponentActivity() {
             }
             MauzTubeTheme(mode = appSettings.themeMode, dynamicColor = appSettings.dynamicColor) {
                 CompositionLocalProvider(LocalInPip provides inPip.value) {
-                    AppNavigation(deepLinks.receiveAsFlow())
+                    com.mauztube.ui.components.TvEnvironment {
+                        AppNavigation(deepLinks.receiveAsFlow())
+                    }
                 }
             }
         }

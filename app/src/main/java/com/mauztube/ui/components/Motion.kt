@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.graphics.drawscope.scale
@@ -88,6 +89,8 @@ private class PressScaleNode(
 ) : androidx.compose.ui.node.DelegatingNode(), androidx.compose.ui.node.DrawModifierNode {
     private val amount = Animatable(1f)
     private var animation: kotlinx.coroutines.Job? = null
+    /** Su TV: bordo attorno all'elemento selezionato col telecomando. */
+    private var focusBorder = false
 
     init {
         delegate(androidx.compose.material3.ripple().create(source))
@@ -96,14 +99,33 @@ private class PressScaleNode(
     override fun onAttach() {
         coroutineScope.launch {
             val pressed = mutableListOf<androidx.compose.foundation.interaction.PressInteraction.Press>()
+            var focused = false
             source.interactions.collect { i ->
                 when (i) {
                     is androidx.compose.foundation.interaction.PressInteraction.Press -> pressed += i
                     is androidx.compose.foundation.interaction.PressInteraction.Release -> pressed -= i.press
                     is androidx.compose.foundation.interaction.PressInteraction.Cancel -> pressed -= i.press
+                    // Su TV la scheda selezionata col telecomando si ingrandisce un poco.
+                    is androidx.compose.foundation.interaction.FocusInteraction.Focus -> focused = com.mauztube.util.DeviceProfile.isTv
+                    is androidx.compose.foundation.interaction.FocusInteraction.Unfocus -> focused = false
+                }
+                if (focusBorder != focused) {
+                    focusBorder = focused
+                    invalidateDraw()
+                }
+                when (i) {
+                    is androidx.compose.foundation.interaction.PressInteraction.Press,
+                    is androidx.compose.foundation.interaction.PressInteraction.Release,
+                    is androidx.compose.foundation.interaction.PressInteraction.Cancel,
+                    is androidx.compose.foundation.interaction.FocusInteraction.Focus,
+                    is androidx.compose.foundation.interaction.FocusInteraction.Unfocus -> Unit
                     else -> return@collect
                 }
-                val target = if (pressed.isEmpty()) 1f else 0.97f
+                val target = when {
+                    pressed.isNotEmpty() -> 0.97f
+                    focused -> 1.02f
+                    else -> 1f
+                }
                 animation?.cancel()
                 animation = launch {
                     amount.animateTo(
@@ -119,5 +141,17 @@ private class PressScaleNode(
         val s = amount.value
         if (s == 1f) drawContent()
         else scale(s) { this@draw.drawContent() }
+        if (focusBorder) {
+            val stroke = 3.dp.toPx()
+            scale(s) {
+                drawRoundRect(
+                    color = com.mauztube.ui.theme.BrandRed,
+                    topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
+                    size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx()),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
+                )
+            }
+        }
     }
 }

@@ -68,6 +68,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.animation.core.tween
 import com.mauztube.ui.components.pressScale
@@ -257,7 +262,67 @@ fun PlayerWithControls(
         if (seekFeedback != null) { delay(if ((seekFeedback?.length ?: 0) > 8) 1_400 else 700); seekFeedback = null }
     }
 
-    Box(modifier.background(Color.Black)) {
+    // ---- Telecomando (solo Android TV) ----
+    val isTv = com.mauztube.ui.components.LocalIsTv.current
+    val rootFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val playFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    fun remoteSeek(side: Int) {
+        val now = System.currentTimeMillis()
+        tapSeconds = if (side == tapSide && now - lastSeekTapAt < 900) tapSeconds + 10 else 10
+        lastSeekTapAt = now
+        tapSide = side
+        tapTick++
+        if (side < 0) player.seekBack() else player.seekForward()
+    }
+    /**
+     * Come YouTube per TV: a comandi nascosti OK = play/pausa, sinistra/destra = ±10 s, su/giù
+     * = mostra i comandi; con i comandi visibili le frecce si spostano tra i pulsanti e
+     * "indietro" li nasconde. I tasti multimediali del telecomando funzionano sempre.
+     */
+    fun onRemoteKey(e: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return false
+        interaction++
+        val k = e.key
+        when (k) {
+            androidx.compose.ui.input.key.Key.MediaPlayPause -> { if (player.isPlaying) player.pause() else player.play(); return true }
+            androidx.compose.ui.input.key.Key.MediaPlay -> { player.play(); return true }
+            androidx.compose.ui.input.key.Key.MediaPause -> { player.pause(); return true }
+            androidx.compose.ui.input.key.Key.MediaFastForward -> { remoteSeek(1); return true }
+            androidx.compose.ui.input.key.Key.MediaRewind -> { remoteSeek(-1); return true }
+        }
+        if (visible) return false
+        return when (k) {
+            androidx.compose.ui.input.key.Key.DirectionCenter, androidx.compose.ui.input.key.Key.Enter,
+            androidx.compose.ui.input.key.Key.NumPadEnter -> {
+                if (player.isPlaying) player.pause() else player.play()
+                visible = true
+                true
+            }
+            androidx.compose.ui.input.key.Key.DirectionLeft -> { remoteSeek(-1); true }
+            androidx.compose.ui.input.key.Key.DirectionRight -> { remoteSeek(1); true }
+            androidx.compose.ui.input.key.Key.DirectionUp, androidx.compose.ui.input.key.Key.DirectionDown -> { visible = true; true }
+            else -> false
+        }
+    }
+    // "Indietro" con i comandi visibili li nasconde (il tasto Back non arriva come evento di
+    // tastiera a Compose: serve un BackHandler, che ha la precedenza su quello della schermata).
+    androidx.activity.compose.BackHandler(enabled = isTv && visible) { visible = false }
+    if (isTv) {
+        // Comandi visibili: selezione sul play/pausa; nascosti: il player riceve i tasti.
+        LaunchedEffect(visible) {
+            kotlinx.coroutines.yield()
+            runCatching { if (visible) playFocus.requestFocus() else rootFocus.requestFocus() }
+        }
+    }
+
+    Box(
+        modifier.background(Color.Black).then(
+            if (isTv) Modifier.focusRequester(rootFocus)
+                .onPreviewKeyEvent { onRemoteKey(it) }
+                .focusable()
+            else Modifier
+        )
+    ) {
         VideoView(player, Modifier.fillMaxSize())
 
         if (audioOnly || loading) {
@@ -292,6 +357,7 @@ fun PlayerWithControls(
         val backDispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
         val windowHeightPx = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toFloat()
         var gestureCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+        val gestureScope = rememberCoroutineScope()
         Box(
             Modifier.fillMaxSize()
                 .pointerInputTaps(
@@ -316,6 +382,7 @@ fun PlayerWithControls(
                     // fermo (il trascinamento si bloccherebbe).
                     var total = 0f
                     var lastRootY = 0f
+                    var lastPos = androidx.compose.ui.geometry.Offset.Zero
                     var collapsing = false
                     val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
                     val screenH = windowHeightPx.coerceAtLeast(1f)
@@ -323,6 +390,25 @@ fun PlayerWithControls(
                         gestureCoords?.takeIf { it.isAttached }?.localToRoot(local) ?: local
                     fun backEvent(pos: androidx.compose.ui.geometry.Offset, progress: Float) =
                         androidx.activity.BackEventCompat(pos.x, pos.y, progress, androidx.activity.BackEventCompat.EDGE_NONE)
+                    /**
+                     * Fine della riduzione dopo il rilascio, come il client di YouTube: prosegue con
+                     * lo slancio del dito e poi rallenta. Più il gesto è rapido, più è breve
+                     * (≈140 ms per uno scatto veloce, 220 ms per un rilascio lento), in proporzione
+                     * alla strada che manca.
+                     */
+                    fun finishCollapse(from: Float, velocityPx: Float, pos: androidx.compose.ui.geometry.Offset) {
+                        val dispatcher = backDispatcher ?: return
+                        val speed = ((velocityPx / density.density - 1000f) / 2000f).coerceIn(0f, 1f)
+                        val base = 220f - 80f * speed
+                        val duration = (base * (0.4f + 0.6f * (1f - from))).toInt().coerceAtLeast(60)
+                        gestureScope.launch {
+                            androidx.compose.animation.core.animate(
+                                from, 1f,
+                                animationSpec = tween(duration, easing = androidx.compose.animation.core.LinearOutSlowInEasing),
+                            ) { value, _ -> dispatcher.dispatchOnBackProgressed(backEvent(pos, value)) }
+                            dispatcher.onBackPressed()
+                        }
+                    }
                     detectVerticalDragGestures(
                         onDragStart = { start ->
                             total = 0f
@@ -342,8 +428,9 @@ fun PlayerWithControls(
                                 // gesto è veloce, più è rapida), altrimenti torna su.
                                 val velocity = tracker.calculateVelocity().y
                                 val progress = (total / screenH).coerceIn(0f, 1f)
-                                if (progress > 0.15f || (velocity > flingVelocityPx && progress > 0.03f)) backDispatcher?.onBackPressed()
-                                else backDispatcher?.dispatchOnBackCancelled()
+                                if (progress > 0.15f || (velocity > flingVelocityPx && progress > 0.03f)) {
+                                    finishCollapse(progress, velocity, lastPos)
+                                } else backDispatcher?.dispatchOnBackCancelled()
                                 return@detectVerticalDragGestures
                             }
                             when {
@@ -360,6 +447,7 @@ fun PlayerWithControls(
                         onVerticalDrag = { change, _ ->
                             change.consume()
                             val pos = rootPos(change.position)
+                            lastPos = pos
                             total += pos.y - lastRootY
                             lastRootY = pos.y
                             tracker.addPosition(change.uptimeMillis, pos)
@@ -466,6 +554,7 @@ fun PlayerWithControls(
                         val ended = snap.playbackState == Player.STATE_ENDED
                         Box(
                             Modifier.size(64.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f))
+                                .focusRequester(playFocus)
                                 .clickable {
                                     when {
                                         ended -> { player.seekTo(0); player.play() }

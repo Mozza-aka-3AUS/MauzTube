@@ -148,7 +148,7 @@ private fun NavScope.navPopEnter(): androidx.compose.animation.EnterTransition =
     else -> slideInHorizontally(enterSpec()) { -it / 24 } + fadeIn(enterSpec(200))
 }
 
-private const val PLAYER_COLLAPSE_MS = 260
+private const val PLAYER_COLLAPSE_MS = 220
 
 private fun NavScope.navPopExit(): androidx.compose.animation.ExitTransition = when {
     // Chiudendo il video si rimpicciolisce verso il mini player (in basso a destra), come su
@@ -298,7 +298,7 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
                             onClick = { openTopLevel(item) },
                             icon = { Icon(item.icon, item.label) },
                             label = { NavLabel(item.label) },
-                            alwaysShowLabel = window.heightDp >= 520f,
+                            alwaysShowLabel = window.heightDp >= 520f || com.mauztube.ui.components.LocalIsTv.current,
                         )
                     }
                 }

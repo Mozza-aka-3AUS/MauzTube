@@ -1,0 +1,1 @@
+Supporto per Android TV e Google TV: banner nella schermata principale, navigazione e tasti del player col telecomando, interfaccia più grande. Riducendo il video con un gesto rapido la chiusura è più veloce, come nell'app ufficiale di YouTube.

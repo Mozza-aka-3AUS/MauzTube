@@ -93,9 +93,11 @@ fun MiniPlayer(
             .shadow(12.dp, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
             .background(Color.Black)
-            .pointerInput(np.videoId) {
-                detectTapGestures(onTap = { onExpand(np.videoId) })
-            }
+            .then(
+                // Su TV si seleziona col telecomando (OK riapre il video); sul telefono si tocca.
+                if (com.mauztube.ui.components.LocalIsTv.current) Modifier.clickable { onExpand(np.videoId) }
+                else Modifier.pointerInput(np.videoId) { detectTapGestures(onTap = { onExpand(np.videoId) }) }
+            )
             .pointerInput(np.videoId) {
                 detectDragGestures(
                     onDragEnd = {

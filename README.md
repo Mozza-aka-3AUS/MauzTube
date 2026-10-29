@@ -294,6 +294,22 @@ landscape.
   before, a full copy of the configuration made the UI believe it was still in portrait after a
   rotation.
 
+### Android TV / Google TV
+The same APK works on Android TV and Google TV (Android 7+). Everything TV-specific is enabled
+only when the app runs on a TV (`DeviceProfile.isTv`, `ui/components/Tv.kt`), so phones keep
+exactly the same interface and behaviour.
+- **Launcher**: MauzTube appears on the TV home screen (`LEANBACK_LAUNCHER` with a 320×180
+  banner); touchscreen and leanback are declared as not required.
+- **10-foot UI**: the whole interface is scaled up by 20%; navigation uses the side rail with
+  labels.
+- **Remote control**: the selected item is clearly highlighted (accent-coloured ripple, a border
+  and a slight zoom on video cards). In the player: OK = play/pause and show controls,
+  left/right = ±10 s (repeated presses add up, with the same arc as double tap), up/down = show
+  controls, media keys always work; with controls visible the arrows move between buttons and
+  Back hides them. Videos open in full screen and Back returns to the previous screen; the mini
+  player can be selected and opened with the remote.
+- Tested on the Google TV emulator (Android 16, 1080p).
+
 ### Smoothness and animations
 - **Navigation transitions** (≤ 260 ms, Navigation's default is 700 ms): the next screen slides
   in slightly from the right, the player rises from the bottom like on YouTube and slides down

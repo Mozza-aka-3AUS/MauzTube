@@ -1,0 +1,1 @@
+Android TV and Google TV support: home screen banner, remote control navigation and player keys, larger interface. Collapsing the video with a quick flick is now faster, like the official YouTube app.

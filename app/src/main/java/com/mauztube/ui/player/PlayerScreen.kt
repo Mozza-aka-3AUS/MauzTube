@@ -129,7 +129,13 @@ fun PlayerScreen(
     // A schermo intero "indietro" esce dallo schermo intero. Altrimenti ci pensa la navigazione
     // con il back predittivo: il video si riduce nel mini player (continua a suonare), e lo
     // stesso meccanismo segue il dito quando lo si trascina verso il basso.
-    BackHandler(enabled = fullscreen) { vm.setFullscreen(false) }
+    // Su TV il video parte a schermo intero e "indietro" torna subito alla schermata precedente.
+    val isTv = com.mauztube.ui.components.LocalIsTv.current
+    LaunchedEffect(vm.videoId, isTv) { if (isTv) vm.setFullscreen(true) }
+    BackHandler(enabled = fullscreen) {
+        vm.setFullscreen(false)
+        if (isTv) onBack()
+    }
 
     FullscreenEffect(fullscreen)
     val rating by vm.rating.collectAsStateWithLifecycle()
