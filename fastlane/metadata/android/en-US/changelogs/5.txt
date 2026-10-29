@@ -1,0 +1,1 @@
+Dragging the video down now follows your finger, like YouTube: it shrinks into the mini player while the app appears underneath, fast and smooth with quick gestures.

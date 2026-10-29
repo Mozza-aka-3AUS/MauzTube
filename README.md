@@ -225,8 +225,14 @@ because URLs may have expired.
   (automatic or fixed), **Speed** and **Subtitles** menus, **Audio only** button.
 - At the top of the player: **Autoplay** (when the video ends, the first related video not yet
   watched starts; off by default, the choice is remembered) and **Loop** (off by default).
-- **Gestures**: in portrait, dragging the video down turns it into the mini player; in
-  full screen, dragging up shows the related videos.
+- **Gestures**: in portrait, dragging the video down turns it into the mini player **following
+  the finger**, like YouTube: the player shrinks towards the bottom-right corner while the
+  previous screen appears underneath; on release it completes (past 15% of the screen or with a
+  quick flick, faster the faster the gesture) or springs back. It is driven by Android's
+  predictive back (`OnBackPressedDispatcher.dispatchOnBack*` → `NavHost` seeking its
+  `predictivePop*Transition`, linear so the top edge tracks the finger 1:1); finger movement is
+  measured in screen coordinates because the gesture area moves with the video. In full screen,
+  dragging up shows the related videos.
 - **Fallback decoder**: if the phone's hardware decoder fails, the video restarts from the same
   point with another decoder instead of stopping with an error.
 - **Stutter protection**: if the phone keeps dropping frames (typical of 60 fps or 1080p on

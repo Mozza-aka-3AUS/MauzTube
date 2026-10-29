@@ -68,6 +68,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.animation.core.tween
 import com.mauztube.ui.components.pressScale
 import androidx.compose.animation.togetherWith
@@ -287,6 +288,10 @@ fun PlayerWithControls(
         //      schermo intero → su = consigliati, giù = chiudi consigliati / esci da schermo intero
         val density = androidx.compose.ui.platform.LocalDensity.current
         val swipeThreshold = with(density) { 64.dp.toPx() }
+        val flingVelocityPx = with(density) { 1000.dp.toPx() }
+        val backDispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+        val windowHeightPx = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toFloat()
+        var gestureCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
         Box(
             Modifier.fillMaxSize()
                 .pointerInputTaps(
@@ -304,11 +309,43 @@ fun PlayerWithControls(
                         interaction++
                     },
                 )
-                .pointerInput(fullscreen) {
+                .onGloballyPositioned { gestureCoords = it }
+                .pointerInput(fullscreen, backDispatcher) {
+                    // Spostamento misurato in coordinate dello SCHERMO: durante la riduzione il
+                    // video si muove insieme al dito, e in coordinate locali il dito sembrerebbe
+                    // fermo (il trascinamento si bloccherebbe).
                     var total = 0f
+                    var lastRootY = 0f
+                    var collapsing = false
+                    val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
+                    val screenH = windowHeightPx.coerceAtLeast(1f)
+                    fun rootPos(local: androidx.compose.ui.geometry.Offset) =
+                        gestureCoords?.takeIf { it.isAttached }?.localToRoot(local) ?: local
+                    fun backEvent(pos: androidx.compose.ui.geometry.Offset, progress: Float) =
+                        androidx.activity.BackEventCompat(pos.x, pos.y, progress, androidx.activity.BackEventCompat.EDGE_NONE)
                     detectVerticalDragGestures(
-                        onDragStart = { total = 0f },
+                        onDragStart = { start ->
+                            total = 0f
+                            collapsing = false
+                            lastRootY = rootPos(start).y
+                            tracker.resetTracking()
+                        },
+                        onDragCancel = {
+                            if (collapsing) backDispatcher?.dispatchOnBackCancelled()
+                            collapsing = false
+                        },
                         onDragEnd = {
+                            if (collapsing) {
+                                collapsing = false
+                                // Rilascio: oltre il 15% dello schermo o con un gesto rapido verso il
+                                // basso il video completa la riduzione (nel tempo che resta: più il
+                                // gesto è veloce, più è rapida), altrimenti torna su.
+                                val velocity = tracker.calculateVelocity().y
+                                val progress = (total / screenH).coerceIn(0f, 1f)
+                                if (progress > 0.15f || (velocity > flingVelocityPx && progress > 0.03f)) backDispatcher?.onBackPressed()
+                                else backDispatcher?.dispatchOnBackCancelled()
+                                return@detectVerticalDragGestures
+                            }
                             when {
                                 fullscreen && relatedOpen && total > swipeThreshold -> relatedOpen = false
                                 fullscreen && total > swipeThreshold -> onSetFullscreen(false)
@@ -320,7 +357,23 @@ fun PlayerWithControls(
                                 !fullscreen && total < -swipeThreshold -> onSetFullscreen(true)
                             }
                         },
-                        onVerticalDrag = { change, amount -> change.consume(); total += amount },
+                        onVerticalDrag = { change, _ ->
+                            change.consume()
+                            val pos = rootPos(change.position)
+                            total += pos.y - lastRootY
+                            lastRootY = pos.y
+                            tracker.addPosition(change.uptimeMillis, pos)
+                            // Verso il basso (non a schermo intero): il video segue il dito.
+                            if (!fullscreen && backDispatcher != null) {
+                                if (!collapsing && total > 0f) {
+                                    collapsing = true
+                                    backDispatcher.dispatchOnBackStarted(backEvent(pos, 0f))
+                                }
+                                if (collapsing) {
+                                    backDispatcher.dispatchOnBackProgressed(backEvent(pos, (total / screenH).coerceIn(0f, 1f)))
+                                }
+                            }
+                        },
                     )
                 }
         )

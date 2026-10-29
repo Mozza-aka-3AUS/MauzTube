@@ -148,10 +148,20 @@ private fun NavScope.navPopEnter(): androidx.compose.animation.EnterTransition =
     else -> slideInHorizontally(enterSpec()) { -it / 24 } + fadeIn(enterSpec(200))
 }
 
+private const val PLAYER_COLLAPSE_MS = 260
+
 private fun NavScope.navPopExit(): androidx.compose.animation.ExitTransition = when {
-    // Chiudendo il video, scende verso il mini player.
+    // Chiudendo il video si rimpicciolisce verso il mini player (in basso a destra), come su
+    // YouTube. Animazione LINEARE: trascinando il video verso il basso viene "riavvolta" con il
+    // back predittivo (vedi PlayerControls) e così il bordo superiore segue il dito 1:1
+    // (metà dello spostamento dalla traslazione, metà dal rimpicciolimento verso il basso).
     initialState.isPlayer() && !targetState.isPlayer() ->
-        slideOutVertically(exitSpec(200)) { it / 4 } + fadeOut(exitSpec(200))
+        slideOutVertically(tween(PLAYER_COLLAPSE_MS, easing = androidx.compose.animation.core.LinearEasing)) { it / 2 } +
+            androidx.compose.animation.scaleOut(
+                tween(PLAYER_COLLAPSE_MS, easing = androidx.compose.animation.core.LinearEasing),
+                targetScale = 0.5f,
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f),
+            )
     else -> slideOutHorizontally(exitSpec()) { it / 12 } + fadeOut(exitSpec())
 }
 
@@ -327,6 +337,10 @@ fun AppNavigation(deepLinks: Flow<DeepLink>) {
                     exitTransition = { navExit() },
                     popEnterTransition = { navPopEnter() },
                     popExitTransition = { navPopExit() },
+                    // Gesto "indietro" predittivo (anche il trascinamento del video verso il basso):
+                    // stesse transizioni, così il video segue il dito.
+                    predictivePopEnterTransition = { _ -> navPopEnter() },
+                    predictivePopExitTransition = { _ -> navPopExit() },
                 ) {
                     val openChannel: (String) -> Unit = { nav.navigate(ChannelRoute(it)) }
                     val openVideo: (String) -> Unit = { nav.openVideo(it) }

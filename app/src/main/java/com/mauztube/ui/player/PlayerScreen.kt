@@ -126,10 +126,10 @@ fun PlayerScreen(
     val state = nowPlaying?.takeIf { it.videoId == vm.videoId }?.state ?: PlayerUiState.Loading
     val ready = state as? PlayerUiState.Ready
 
-    // "Indietro" riduce il video nel mini player (continua a suonare), come YouTube.
-    BackHandler {
-        if (fullscreen) vm.setFullscreen(false) else onBack()
-    }
+    // A schermo intero "indietro" esce dallo schermo intero. Altrimenti ci pensa la navigazione
+    // con il back predittivo: il video si riduce nel mini player (continua a suonare), e lo
+    // stesso meccanismo segue il dito quando lo si trascina verso il basso.
+    BackHandler(enabled = fullscreen) { vm.setFullscreen(false) }
 
     FullscreenEffect(fullscreen)
     val rating by vm.rating.collectAsStateWithLifecycle()
