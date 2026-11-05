@@ -215,6 +215,7 @@ fun PlayerWithControls(
     manager: PlaybackManager,
     segments: List<SponsorSegment>,
     fullscreen: Boolean,
+    title: String,
     audioOnly: Boolean,
     coverUrl: String?,
     loading: Boolean,
@@ -500,8 +501,20 @@ fun PlayerWithControls(
                 ) {
                     if (!fullscreen) {
                         ControlButton(Icons.Default.KeyboardArrowDown, tr("Minimize", "Riduci"), onMinimize)
+                        Spacer(Modifier.weight(1f))
+                    } else if (title.isNotBlank()) {
+                        // A schermo intero, come su YouTube: il titolo del video in alto a sinistra.
+                        Text(
+                            title,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
                     }
-                    Spacer(Modifier.weight(1f))
                     if (queueSize > 0) {
                         ControlButton(AppIcons.Queue, tr("Queue ($queueSize)", "Coda ($queueSize)"), onOpenQueue, tint = primary)
                     }

@@ -181,6 +181,7 @@ fun PlayerScreen(
                 manager = vm.manager,
                 segments = ready?.segments.orEmpty(),
                 fullscreen = fullscreen,
+                title = ready?.details?.title ?: vm.preview?.title ?: "",
                 audioOnly = audioOnly,
                 coverUrl = ready?.details?.thumbnailUrl ?: vm.preview?.thumbnailUrl,
                 loading = state is PlayerUiState.Loading,
