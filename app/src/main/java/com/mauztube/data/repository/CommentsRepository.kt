@@ -79,6 +79,7 @@ class CommentsRepository @Inject constructor(
             replyCount = replyCount.coerceAtLeast(0),
             pinned = isPinned,
             byChannelOwner = isChannelOwner,
+            heartedByUploader = isHeartedByUploader,
             loadReplies = if (replyCount > 0 && Page.isValid(replies)) nextLoader(url, replies) else null,
         )
     }

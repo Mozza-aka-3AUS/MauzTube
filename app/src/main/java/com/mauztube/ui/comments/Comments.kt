@@ -3,6 +3,7 @@ package com.mauztube.ui.comments
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -41,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -272,7 +275,24 @@ private fun CommentRow(c: CommentItem, indent: Boolean) {
         if (c.isHtml) AnnotatedString.fromHtml(c.textHtml, linkStyles = TextLinkStyles(SpanStyle(color = link))) else AnnotatedString(c.textHtml)
     }
     Row(Modifier.fillMaxWidth().padding(start = if (indent) 52.dp else 12.dp, end = 12.dp, top = 10.dp, bottom = 4.dp)) {
-        Avatar(c.authorAvatarUrl, c.author, if (indent) 24 else 32)
+        Box {
+            Avatar(c.authorAvatarUrl, c.author, if (indent) 24 else 32)
+            // Cuore del creatore: YouTube lo mostra come badge in basso a destra dell'avatar.
+            if (c.heartedByUploader) {
+                Box(
+                    Modifier.align(Alignment.BottomEnd).size(16.dp).clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        AppIcons.Heart,
+                        tr("Loved by the creator", "Apprezzato dal creatore"),
+                        modifier = Modifier.size(11.dp),
+                        tint = Color(0xFFE0245E),
+                    )
+                }
+            }
+        }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

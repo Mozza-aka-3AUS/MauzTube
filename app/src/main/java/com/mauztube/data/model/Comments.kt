@@ -13,6 +13,8 @@ data class CommentItem(
     val replyCount: Int,
     val pinned: Boolean,
     val byChannelOwner: Boolean,
+    /** Il creatore del video ha messo "mi piace" (cuore) a questo commento. */
+    val heartedByUploader: Boolean,
     /** Caricamento delle risposte (null se non ce ne sono). */
     val loadReplies: (suspend () -> Paged<CommentItem>)?,
 )

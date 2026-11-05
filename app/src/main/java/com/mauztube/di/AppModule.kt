@@ -46,6 +46,21 @@ object AppModule {
         // Connessioni riutilizzate più a lungo: meno handshake TLS ⇒ estrazione più rapida.
         // Al cambio di rete il pool viene svuotato (NetworkWatcher).
         .connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
+        // Le immagini caricate da Coil (avatar dei commenti/canali su yt3.ggpht.com) non hanno uno
+        // User-Agent: senza, ggpht risponde 403 e l'avatar resta vuoto (le miniature su i.ytimg.com
+        // funzionano comunque). Le richieste di API/estrattore impostano già il proprio UA, quindi
+        // questo intercettore tocca solo le immagini.
+        .addInterceptor { chain ->
+            val req = chain.request()
+            chain.proceed(
+                if (req.header("User-Agent") == null)
+                    req.newBuilder()
+                        .header("User-Agent", com.mauztube.data.extractor.NewPipeDownloader.USER_AGENT)
+                        .header("Referer", "https://www.youtube.com/")
+                        .build()
+                else req
+            )
+        }
         .dns(dns)
         // Niente "gara" IPv6/IPv4 a ogni connessione: vedi CachingDns (URL legati all'IP).
         .fastFallback(false)
