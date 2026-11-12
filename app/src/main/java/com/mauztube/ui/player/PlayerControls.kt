@@ -302,7 +302,8 @@ fun PlayerWithControls(
             androidx.compose.ui.input.key.Key.MediaFastForward -> { remoteSeek(1); return true }
             androidx.compose.ui.input.key.Key.MediaRewind -> { remoteSeek(-1); return true }
         }
-        if (visible) return false
+        // Con i comandi visibili o il pannello informazioni aperto le frecce spostano la selezione.
+        if (visible || infoOpen) return false
         return when (k) {
             androidx.compose.ui.input.key.Key.DirectionCenter, androidx.compose.ui.input.key.Key.Enter,
             androidx.compose.ui.input.key.Key.NumPadEnter -> {
@@ -323,7 +324,7 @@ fun PlayerWithControls(
         // Comandi visibili: selezione sul play/pausa; nascosti: il player riceve i tasti.
         LaunchedEffect(visible) {
             kotlinx.coroutines.yield()
-            runCatching { if (visible) playFocus.requestFocus() else rootFocus.requestFocus() }
+            runCatching { if (visible) playFocus.requestFocus() else if (!infoOpen) rootFocus.requestFocus() }
         }
     }
 
@@ -742,6 +743,18 @@ fun PlayerWithControls(
     }
     // "Indietro" con il pannello aperto lo chiude (ha la precedenza sugli altri).
     androidx.activity.compose.BackHandler(enabled = infoOpen && fullscreen) { infoOpen = false }
+    if (isTv) {
+        // Chiuso il pannello, la selezione torna sui comandi (non resta su un elemento sparito).
+        var wasOpen by remember { mutableStateOf(false) }
+        LaunchedEffect(infoOpen) {
+            if (wasOpen && !infoOpen) {
+                visible = true
+                kotlinx.coroutines.yield()
+                runCatching { playFocus.requestFocus() }
+            }
+            wasOpen = infoOpen
+        }
+    }
 
     if (sheetOpen) {
         ModalBottomSheet(

@@ -1,0 +1,1 @@
+Android TV: in the full-screen video info panel the remote's arrows now move between the panel's buttons (subscribe, like, links); closing it with Back returns the selection to the player controls.

@@ -1,0 +1,1 @@
+Android TV: nella tendina informazioni a schermo intero le frecce del telecomando ora si spostano tra i pulsanti (iscriviti, mi piace, link); chiudendola con Indietro la selezione torna sui comandi del player.
