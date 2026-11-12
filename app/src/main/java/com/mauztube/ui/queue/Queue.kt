@@ -175,7 +175,7 @@ private fun QueueRow(
                 modifier = Modifier.width(24.dp),
             )
             Box(Modifier.width(120.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                AsyncImage(video.thumbnailUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth())
+                com.mauztube.ui.components.VideoCover(video.thumbnailUrl, video.id, modifier = Modifier.fillMaxWidth())
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {

@@ -83,6 +83,7 @@ class NewPipeDownloader @Inject constructor(
             }
             val body = response.body.string()
             val url = request.url()
+            if ("/v1/next" in url) CommentAvatars.collect(body)
             // Risposta del client visionOS: è quella da cui NewPipeExtractor prende gli URL degli
             // stream (il client Android oggi restituisce solo un URL SABR senza formati diretti).
             if (response.code == 200 && url.startsWith(GAPIS_PLAYER)) {

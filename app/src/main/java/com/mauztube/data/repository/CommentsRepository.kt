@@ -69,8 +69,9 @@ class CommentsRepository @Inject constructor(
         val replies = replies
         return CommentItem(
             id = commentId ?: (uploaderName + textualUploadDate),
-            author = uploaderName.orEmpty(),
-            authorAvatarUrl = uploaderAvatars.bestUrl(96),
+            author = uploaderName?.takeIf { it.isNotBlank() } ?: com.mauztube.data.extractor.CommentAvatars.nameForChannelUrl(uploaderUrl).orEmpty(),
+            // NewPipe non trova più gli avatar dei commenti: si usa quello letto dalla risposta.
+            authorAvatarUrl = uploaderAvatars.bestUrl(96) ?: com.mauztube.data.extractor.CommentAvatars.forChannelUrl(uploaderUrl),
             authorUrl = uploaderUrl,
             textHtml = text.content.orEmpty(),
             isHtml = text.type == Description.HTML,

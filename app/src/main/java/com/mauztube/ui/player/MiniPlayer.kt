@@ -126,7 +126,7 @@ fun MiniPlayer(
     ) {
         VideoView(manager.player, Modifier.fillMaxSize())
         if (audioOnly || np.state !is PlayerUiState.Ready) {
-            AsyncImage(model = cover, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            com.mauztube.ui.components.VideoCover(cover, np.videoId, Modifier.fillMaxSize())
         }
         // Cerchio sottile attorno all'icona: abbastanza contrasto sul video senza un alone pesante.
         Box(

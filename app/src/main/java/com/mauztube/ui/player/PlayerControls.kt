@@ -51,6 +51,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.layout.only
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -233,7 +235,16 @@ fun PlayerWithControls(
     related: List<com.mauztube.data.model.VideoItem>,
     onOpenRelated: (com.mauztube.data.model.VideoItem) -> Unit,
     modifier: Modifier = Modifier,
+    /** Informazioni sul video, mostrate a destra a schermo intero toccando il titolo. */
+    infoPanel: (@Composable () -> Unit)? = null,
 ) {
+    // Pannello informazioni a schermo intero (tocco sul titolo), come su YouTube.
+    var infoOpen by remember { mutableStateOf(false) }
+    if (!fullscreen && infoOpen) infoOpen = false
+    // Uscita dallo schermo intero trascinando in giù: spostamento (px) che segue il dito.
+    var exitDragPx by remember { mutableFloatStateOf(0f) }
+    var exitAnim by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    if (!fullscreen && exitDragPx != 0f) { exitAnim?.cancel(); exitDragPx = 0f }
     // Pannello dei consigliati a schermo intero (si apre trascinando verso l'alto).
     var relatedOpen by remember { mutableStateOf(false) }
     if (!fullscreen && relatedOpen) relatedOpen = false
@@ -316,8 +327,20 @@ fun PlayerWithControls(
         }
     }
 
+    val exitScreenH = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toFloat().coerceAtLeast(1f)
     Box(
-        modifier.background(Color.Black).then(
+        modifier
+            // Il valore è letto in fase di disegno: il trascinamento non ricompone nulla.
+            .graphicsLayer {
+                val px = exitDragPx
+                if (px != 0f) {
+                    val p = (px / exitScreenH).coerceIn(0f, 1f)
+                    translationY = px * 0.6f
+                    scaleX = 1f - 0.3f * p
+                    scaleY = scaleX
+                }
+            }
+            .background(Color.Black).then(
             if (isTv) Modifier.focusRequester(rootFocus)
                 .onPreviewKeyEvent { onRemoteKey(it) }
                 .focusable()
@@ -327,11 +350,9 @@ fun PlayerWithControls(
         VideoView(player, Modifier.fillMaxSize())
 
         if (audioOnly || loading) {
-            AsyncImage(
-                model = coverUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+            com.mauztube.ui.components.VideoCover(
+                coverUrl, manager.nowPlaying.collectAsStateWithLifecycle().value?.videoId,
+                Modifier.fillMaxSize(), width = 1280, height = 720,
             )
             if (audioOnly && !loading) {
                 Row(
@@ -397,6 +418,29 @@ fun PlayerWithControls(
                      * (≈140 ms per uno scatto veloce, 220 ms per un rilascio lento), in proporzione
                      * alla strada che manca.
                      */
+                    /** Rilascio del trascinamento a schermo intero: esce o torna al suo posto. */
+                    fun releaseExit(velocity: Float) {
+                        val p = (exitDragPx / screenH).coerceIn(0f, 1f)
+                        val exit = p > 0.12f || (velocity > flingVelocityPx && p > 0.02f)
+                        exitAnim?.cancel()
+                        exitAnim = gestureScope.launch {
+                            if (exit) {
+                                // Prosegue brevemente nella direzione del dito, poi torna in verticale.
+                                val target = (exitDragPx + screenH * 0.12f).coerceAtMost(screenH * 0.5f)
+                                androidx.compose.animation.core.animate(
+                                    exitDragPx, target,
+                                    animationSpec = tween(90, easing = androidx.compose.animation.core.LinearOutSlowInEasing),
+                                ) { v, _ -> exitDragPx = v }
+                                onSetFullscreen(false)
+                                exitDragPx = 0f
+                            } else {
+                                androidx.compose.animation.core.animate(
+                                    exitDragPx, 0f,
+                                    animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 500f),
+                                ) { v, _ -> exitDragPx = v }
+                            }
+                        }
+                    }
                     fun finishCollapse(from: Float, velocityPx: Float, pos: androidx.compose.ui.geometry.Offset) {
                         val dispatcher = backDispatcher ?: return
                         val speed = ((velocityPx / density.density - 1000f) / 2000f).coerceIn(0f, 1f)
@@ -414,12 +458,14 @@ fun PlayerWithControls(
                         onDragStart = { start ->
                             total = 0f
                             collapsing = false
+                            exitAnim?.cancel()
                             lastRootY = rootPos(start).y
                             tracker.resetTracking()
                         },
                         onDragCancel = {
                             if (collapsing) backDispatcher?.dispatchOnBackCancelled()
                             collapsing = false
+                            if (exitDragPx != 0f) releaseExit(0f)
                         },
                         onDragEnd = {
                             if (collapsing) {
@@ -434,9 +480,12 @@ fun PlayerWithControls(
                                 } else backDispatcher?.dispatchOnBackCancelled()
                                 return@detectVerticalDragGestures
                             }
+                            if (fullscreen && !relatedOpen && exitDragPx > 0f) {
+                                releaseExit(tracker.calculateVelocity().y)
+                                return@detectVerticalDragGestures
+                            }
                             when {
                                 fullscreen && relatedOpen && total > swipeThreshold -> relatedOpen = false
-                                fullscreen && total > swipeThreshold -> onSetFullscreen(false)
                                 fullscreen && total < -swipeThreshold && related.isNotEmpty() -> {
                                     relatedOpen = true
                                     visible = false
@@ -462,6 +511,8 @@ fun PlayerWithControls(
                                     backDispatcher.dispatchOnBackProgressed(backEvent(pos, (total / screenH).coerceIn(0f, 1f)))
                                 }
                             }
+                            // Schermo intero, verso il basso: il video segue il dito e si rimpicciolisce.
+                            if (fullscreen && !relatedOpen) exitDragPx = total.coerceAtLeast(0f)
                         },
                     )
                 }
@@ -502,18 +553,28 @@ fun PlayerWithControls(
                     if (!fullscreen) {
                         ControlButton(Icons.Default.KeyboardArrowDown, tr("Minimize", "Riduci"), onMinimize)
                         Spacer(Modifier.weight(1f))
-                    } else if (title.isNotBlank()) {
-                        // A schermo intero, come su YouTube: il titolo del video in alto a sinistra.
-                        Text(
-                            title,
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                        )
                     } else {
-                        Spacer(Modifier.weight(1f))
+                        // A schermo intero, come su YouTube: freccia in giù (esce dallo schermo
+                        // intero) e titolo del video; toccando il titolo si aprono le informazioni.
+                        ControlButton(Icons.Default.KeyboardArrowDown, tr("Exit full screen", "Esci da schermo intero"), {
+                            onSetFullscreen(false)
+                            if (isTv) onMinimize()
+                        })
+                        if (title.isNotBlank()) {
+                            Text(
+                                title,
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(enabled = infoPanel != null) { infoOpen = true; visible = false }
+                                    .padding(horizontal = 6.dp, vertical = 8.dp),
+                            )
+                        } else {
+                            Spacer(Modifier.weight(1f))
+                        }
                     }
                     if (queueSize > 0) {
                         ControlButton(AppIcons.Queue, tr("Queue ($queueSize)", "Coda ($queueSize)"), onOpenQueue, tint = primary)
@@ -656,7 +717,31 @@ fun PlayerWithControls(
                 onClose = { relatedOpen = false },
             )
         }
+        // ---- Informazioni sul video (a destra, schermo intero) ----
+        if (infoPanel != null) {
+            AnimatedVisibility(
+                visible = infoOpen && fullscreen,
+                enter = fadeIn(tween(160)),
+                exit = fadeOut(tween(160)),
+            ) {
+                // Tocco fuori dal pannello: si chiude.
+                Box(
+                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))
+                        .pointerInputTaps(onTap = { infoOpen = false }, onDoubleTap = { _, _ -> infoOpen = false })
+                )
+            }
+            AnimatedVisibility(
+                visible = infoOpen && fullscreen,
+                enter = androidx.compose.animation.slideInHorizontally(tween(220)) { it } + fadeIn(tween(160)),
+                exit = androidx.compose.animation.slideOutHorizontally(tween(200)) { it } + fadeOut(tween(160)),
+                modifier = Modifier.align(Alignment.CenterEnd),
+            ) {
+                InfoPanel(isTv = isTv, onClose = { infoOpen = false }, content = infoPanel)
+            }
+        }
     }
+    // "Indietro" con il pannello aperto lo chiude (ha la precedenza sugli altri).
+    androidx.activity.compose.BackHandler(enabled = infoOpen && fullscreen) { infoOpen = false }
 
     if (sheetOpen) {
         ModalBottomSheet(
@@ -954,6 +1039,32 @@ private fun ScrubPreview(storyboard: Storyboard, positionMs: Long, fraction: Flo
 }
 
 /** Fila di consigliati sopra il video a schermo intero, come nel client ufficiale. */
+/** Tendina laterale con le informazioni sul video: larga come su YouTube, mai oltre metà schermo. */
+@Composable
+private fun InfoPanel(isTv: Boolean, onClose: () -> Unit, content: @Composable () -> Unit) {
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxHeight()) {
+        val width = minOf(maxWidth * 0.5f, 440.dp).coerceAtLeast(minOf(maxWidth, 320.dp))
+        Column(
+            Modifier.width(width).fillMaxHeight()
+                .background(MaterialTheme.colorScheme.surface)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.End + androidx.compose.foundation.layout.WindowInsetsSides.Vertical))
+                // Assorbe i tocchi: non arrivano al video sotto.
+                .pointerInputTaps(onTap = {}, onDoubleTap = { _, _ -> })
+        ) {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(tr("Description", "Descrizione"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = onClose, modifier = Modifier.focusRequester(focus)) {
+                    Icon(Icons.Default.Close, tr("Close", "Chiudi"))
+                }
+            }
+            Box(Modifier.weight(1f)) { content() }
+        }
+    }
+    // Su TV la selezione entra nel pannello.
+    if (isTv) LaunchedEffect(Unit) { kotlinx.coroutines.yield(); runCatching { focus.requestFocus() } }
+}
+
 @Composable
 private fun RelatedOverlay(
     related: List<com.mauztube.data.model.VideoItem>,
@@ -983,7 +1094,7 @@ private fun RelatedOverlay(
                 val v = unique[i]
                 Column(Modifier.width(220.dp).clip(RoundedCornerShape(10.dp)).clickable { onOpen(v) }) {
                     Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Color.DarkGray)) {
-                        AsyncImage(v.thumbnailUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        com.mauztube.ui.components.VideoCover(v.thumbnailUrl, v.id, Modifier.fillMaxSize())
                         val d = Format.duration(v.durationSeconds)
                         if (d.isNotEmpty()) {
                             Text(

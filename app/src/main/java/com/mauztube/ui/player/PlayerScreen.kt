@@ -199,6 +199,22 @@ fun PlayerScreen(
                 related = ready?.details?.related.orEmpty(),
                 onOpenRelated = { v -> VideoPreviews.put(v); onVideo(v.id) },
                 modifier = playerModifier,
+                infoPanel = ready?.let { r ->
+                    {
+                        FullscreenInfo(
+                            d = r.details,
+                            rating = rating,
+                            likes = votes?.likes?.takeIf { it >= 0 } ?: r.details.likeCount,
+                            dislikes = votes?.dislikes ?: -1,
+                            onRate = vm::rate,
+                            subscribed = subscribed,
+                            onToggleSubscribe = vm::toggleSubscription,
+                            onChannel = { url -> vm.setFullscreen(false); onChannel(url) },
+                            onSeekTo = { ms -> vm.manager.player.seekTo(ms) },
+                            onVideo = onVideo,
+                        )
+                    }
+                },
             )
         }
         val details: @Composable () -> Unit = {
@@ -411,6 +427,50 @@ private fun Details(
         // YouTube a volte ripete un video tra i correlati: chiavi duplicate farebbero chiudere l'app.
         items(d.related.distinctBy { it.id }, key = { "rel-" + it.id }) { video ->
             VideoCard(video, onClick = { VideoPreviews.put(video); onVideo(video.id) }, showQueueButton = true)
+        }
+    }
+}
+
+/** Informazioni sul video nella tendina laterale a schermo intero (come su YouTube). */
+@Composable
+private fun FullscreenInfo(
+    d: VideoDetails,
+    rating: Int,
+    likes: Long,
+    dislikes: Long,
+    onRate: (Int) -> Unit,
+    subscribed: Boolean,
+    onToggleSubscribe: () -> Unit,
+    onChannel: (String) -> Unit,
+    onSeekTo: (Long) -> Unit,
+    onVideo: (String) -> Unit,
+) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+        item(key = "info") {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text(d.title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    listOf(Format.views(d.viewCount), d.uploadedAtMillis?.let(Format::date) ?: d.textualUploadDate.orEmpty())
+                        .filter { it.isNotBlank() }.joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+        item(key = "channel") { ChannelBar(d, subscribed, onToggleSubscribe, onChannel) }
+        item(key = "rating") {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) { RatingPill(rating, likes, dislikes, onRate) }
+        }
+        if (d.description.isNotBlank()) {
+            item(key = "description") {
+                Column(
+                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp).fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(12.dp)
+                ) { DescriptionText(d, true, onSeekTo, onVideo) }
+            }
         }
     }
 }

@@ -116,19 +116,7 @@ private fun VideoThumb(video: VideoItem, progress: Float?, modifier: Modifier) {
             .clip(ThumbShape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        // Decodifica a 640×360: le miniature sorgente sono ≤ 480 px di altezza, quindi
-        // ingrandirle alla larghezza dello schermo non aggiunge dettaglio ma costa memoria
-        // e tempo di caricamento sulla GPU durante lo scorrimento.
-        val context = LocalContext.current
-        val request = remember(video.thumbnailUrl) {
-            coil3.request.ImageRequest.Builder(context).data(video.thumbnailUrl).size(640, 360).build()
-        }
-        AsyncImage(
-            model = request,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
+        VideoCover(video.thumbnailUrl, video.id, Modifier.fillMaxSize())
         val badge = if (video.isLive) "LIVE" else Format.duration(video.durationSeconds)
         if (badge.isNotEmpty()) {
             Text(
@@ -198,6 +186,33 @@ private fun VideoInfo(video: VideoItem, extraLine: String?, showQueueButton: Boo
         }
         VideoMenu(video)
     }
+}
+
+/**
+ * Copertina di un video, sempre presente. Alcuni video arrivano senza indirizzo della
+ * miniatura (o con un indirizzo firmato ormai scaduto): in quei casi si usa la miniatura
+ * standard di YouTube, che esiste per ogni video (`i.ytimg.com/vi/<id>/hqdefault.jpg`),
+ * subito se l'indirizzo manca oppure al primo errore di caricamento.
+ *
+ * Decodifica di default a 640×360: le miniature sorgente sono ≤ 480 px di altezza, quindi
+ * ingrandirle non aggiunge dettaglio ma costa memoria e lavoro durante lo scorrimento.
+ */
+@Composable
+fun VideoCover(url: String?, videoId: String?, modifier: Modifier = Modifier, width: Int = 640, height: Int = 360) {
+    val fallback = videoId?.takeIf { it.isNotBlank() }?.let { "https://i.ytimg.com/vi/$it/hqdefault.jpg" }
+    var useFallback by remember(url, videoId) { mutableStateOf(url.isNullOrBlank()) }
+    val data = (if (useFallback) fallback else url) ?: return
+    val context = LocalContext.current
+    val request = remember(data, width, height) {
+        coil3.request.ImageRequest.Builder(context).data(data).size(width, height).build()
+    }
+    AsyncImage(
+        model = request,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier,
+        onError = { if (!useFallback && fallback != null) useFallback = true },
+    )
 }
 
 /** Menu ⋮ della card: Guarda più tardi e Condividi. */

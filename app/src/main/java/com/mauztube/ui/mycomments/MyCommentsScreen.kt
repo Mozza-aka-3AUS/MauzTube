@@ -123,7 +123,7 @@ fun MyCommentsScreen(
                     verticalAlignment = Alignment.Top,
                 ) {
                     Box(Modifier.width(120.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                        AsyncImage(c.thumbnailUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        com.mauztube.ui.components.VideoCover(c.thumbnailUrl, c.videoId, Modifier.fillMaxSize())
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
