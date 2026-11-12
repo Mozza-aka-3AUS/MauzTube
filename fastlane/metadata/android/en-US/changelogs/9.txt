@@ -1,0 +1,1 @@
+Thumbnails are always shown (fallback to the standard YouTube thumbnail). Comments show the authors' profile pictures and names again. Full screen: down arrow next to the title to exit, tap the title to open a side panel with the video info. The gesture to exit full screen now follows your finger.

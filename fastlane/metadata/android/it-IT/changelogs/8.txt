@@ -1,0 +1,1 @@
+Schermo intero: il titolo del video compare in alto a sinistra insieme ai comandi, come nell'app ufficiale di YouTube.

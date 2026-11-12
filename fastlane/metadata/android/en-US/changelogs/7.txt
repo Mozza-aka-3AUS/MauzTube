@@ -1,0 +1,1 @@
+Comment and channel profile pictures are visible again (they were rejected by YouTube's image server). A comment liked by the video's creator shows the creator's heart on the avatar, like the official YouTube app.

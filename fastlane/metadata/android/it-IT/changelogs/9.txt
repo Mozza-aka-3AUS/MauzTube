@@ -1,0 +1,1 @@
+Copertine sempre visibili (si usa quella standard di YouTube se manca). I commenti mostrano di nuovo foto profilo e nomi degli autori. Schermo intero: freccia in giù accanto al titolo per uscire, tocco sul titolo per aprire a destra la tendina con le informazioni sul video. La gesture per uscire dallo schermo intero ora segue il dito.
