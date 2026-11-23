@@ -1,0 +1,1 @@
+When a video ends the player controls appear, with Replay, like the official YouTube app. Full screen: on phones with a camera hole the controls now have the same margin on both sides and are no longer shifted to one side.

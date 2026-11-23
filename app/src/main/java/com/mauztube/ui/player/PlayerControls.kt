@@ -270,6 +270,10 @@ fun PlayerWithControls(
             visible = false
         }
     }
+    // Fine del video: i comandi compaiono (con "Riproduci di nuovo"), come su YouTube.
+    LaunchedEffect(snap.playbackState) {
+        if (snap.playbackState == Player.STATE_ENDED && !infoOpen) visible = true
+    }
     LaunchedEffect(seekFeedback) {
         if (seekFeedback != null) { delay(if ((seekFeedback?.length ?: 0) > 8) 1_400 else 700); seekFeedback = null }
     }
@@ -543,8 +547,9 @@ fun PlayerWithControls(
         AnimatedVisibility(visible = visible || scrubFraction != null, enter = fadeIn(), exit = fadeOut()) {
             Box(
                 Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.42f))
-                    // A schermo intero i comandi evitano foro/notch della fotocamera e barre di sistema.
-                    .then(if (fullscreen) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier)
+                    // A schermo intero i comandi evitano foro/notch della fotocamera e barre di sistema,
+                    // con lo stesso margine a sinistra e a destra (restano centrati).
+                    .then(if (fullscreen) Modifier.symmetricSafeDrawing() else Modifier)
             ) {
                 // --- riga superiore ---
                 Row(
@@ -1052,6 +1057,21 @@ private fun ScrubPreview(storyboard: Storyboard, positionMs: Long, fraction: Flo
 }
 
 /** Fila di consigliati sopra il video a schermo intero, come nel client ufficiale. */
+/**
+ * Margini per foro/notch e barre di sistema, uguali a sinistra e a destra: con il telefono in
+ * orizzontale il foro sta da un solo lato, e un margine solo lì spostava tutti i comandi.
+ */
+@Composable
+private fun Modifier.symmetricSafeDrawing(): Modifier {
+    val insets = WindowInsets.safeDrawing
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val dir = androidx.compose.ui.platform.LocalLayoutDirection.current
+    return with(density) {
+        val side = maxOf(insets.getLeft(this, dir), insets.getRight(this, dir)).toDp()
+        padding(start = side, end = side, top = insets.getTop(this).toDp(), bottom = insets.getBottom(this).toDp())
+    }
+}
+
 /** Tendina laterale con le informazioni sul video: larga come su YouTube, mai oltre metà schermo. */
 @Composable
 private fun InfoPanel(isTv: Boolean, onClose: () -> Unit, content: @Composable () -> Unit) {
@@ -1091,7 +1111,7 @@ private fun RelatedOverlay(
                     listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
                 )
             )
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .symmetricSafeDrawing()
             .padding(top = 24.dp, bottom = 12.dp)
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -1,0 +1,1 @@
+Alla fine di un video compaiono i comandi del player, con Riproduci di nuovo, come nell'app ufficiale di YouTube. Schermo intero: sui telefoni con il foro della fotocamera i comandi hanno lo stesso margine sui due lati e non sono più spostati da una parte.
