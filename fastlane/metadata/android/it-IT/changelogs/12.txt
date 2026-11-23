@@ -1,0 +1,1 @@
+Schermo intero: il pannello dei consigliati ora segue il dito quando lo si trascina verso l'alto (e verso il basso per chiuderlo), come nell'app ufficiale di YouTube.

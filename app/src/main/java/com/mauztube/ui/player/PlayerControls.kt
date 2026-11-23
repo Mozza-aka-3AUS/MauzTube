@@ -76,6 +76,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.gestures.draggable
 import androidx.compose.animation.core.tween
 import com.mauztube.ui.components.pressScale
 import androidx.compose.animation.togetherWith
@@ -247,7 +249,12 @@ fun PlayerWithControls(
     if (!fullscreen && exitDragPx != 0f) { exitAnim?.cancel(); exitDragPx = 0f }
     // Pannello dei consigliati a schermo intero (si apre trascinando verso l'alto).
     var relatedOpen by remember { mutableStateOf(false) }
-    if (!fullscreen && relatedOpen) relatedOpen = false
+    // Quanto è aperto il pannello (0 = chiuso, 1 = aperto): segue il dito durante il trascinamento.
+    var relatedP by remember { mutableFloatStateOf(0f) }
+    var relatedH by remember { mutableIntStateOf(0) }
+    var relatedAnim by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    if (!fullscreen && (relatedOpen || relatedP != 0f)) { relatedAnim?.cancel(); relatedOpen = false; relatedP = 0f }
+    val relatedNow by androidx.compose.runtime.rememberUpdatedState(related)
     val onToggleFullscreen = { onSetFullscreen(!fullscreen) }
     val player = manager.player
     val snap = rememberPlayerSnapshot(player)
@@ -385,6 +392,29 @@ fun PlayerWithControls(
         val windowHeightPx = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toFloat()
         var gestureCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
         val gestureScope = rememberCoroutineScope()
+        fun relatedHeightPx(): Float = relatedH.takeIf { it > 0 }?.toFloat() ?: with(density) { 300.dp.toPx() }
+        /** Porta il pannello dei consigliati ad aperto/chiuso dal punto in cui l'ha lasciato il dito. */
+        fun animateRelated(open: Boolean) {
+            relatedAnim?.cancel()
+            relatedOpen = open
+            if (open) visible = false
+            val from = relatedP
+            val target = if (open) 1f else 0f
+            val duration = (240 * kotlin.math.abs(target - from)).toInt().coerceAtLeast(90)
+            relatedAnim = gestureScope.launch {
+                androidx.compose.animation.core.animate(
+                    from, target,
+                    animationSpec = tween(duration, easing = androidx.compose.animation.core.LinearOutSlowInEasing),
+                ) { v, _ -> relatedP = v }
+            }
+        }
+        /** Rilascio: oltre circa un terzo (o con un gesto rapido) completa, altrimenti torna indietro. */
+        fun settleRelated(velocityY: Float) {
+            val p = relatedP
+            val open = if (relatedOpen) !(p < 0.65f || (velocityY > flingVelocityPx && p < 0.98f))
+            else p > 0.35f || (velocityY < -flingVelocityPx && p > 0.02f)
+            animateRelated(open)
+        }
         Box(
             Modifier.fillMaxSize()
                 .pointerInputTaps(
@@ -411,6 +441,7 @@ fun PlayerWithControls(
                     var lastRootY = 0f
                     var lastPos = androidx.compose.ui.geometry.Offset.Zero
                     var collapsing = false
+                    var relatedDragging = false
                     val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
                     val screenH = windowHeightPx.coerceAtLeast(1f)
                     fun rootPos(local: androidx.compose.ui.geometry.Offset) =
@@ -463,6 +494,7 @@ fun PlayerWithControls(
                         onDragStart = { start ->
                             total = 0f
                             collapsing = false
+                            relatedDragging = false
                             exitAnim?.cancel()
                             lastRootY = rootPos(start).y
                             tracker.resetTracking()
@@ -471,6 +503,7 @@ fun PlayerWithControls(
                             if (collapsing) backDispatcher?.dispatchOnBackCancelled()
                             collapsing = false
                             if (exitDragPx != 0f) releaseExit(0f)
+                            if (relatedDragging) { relatedDragging = false; settleRelated(0f) }
                         },
                         onDragEnd = {
                             if (collapsing) {
@@ -489,12 +522,12 @@ fun PlayerWithControls(
                                 releaseExit(tracker.calculateVelocity().y)
                                 return@detectVerticalDragGestures
                             }
+                            if (relatedDragging) {
+                                relatedDragging = false
+                                settleRelated(tracker.calculateVelocity().y)
+                                return@detectVerticalDragGestures
+                            }
                             when {
-                                fullscreen && relatedOpen && total > swipeThreshold -> relatedOpen = false
-                                fullscreen && total < -swipeThreshold && related.isNotEmpty() -> {
-                                    relatedOpen = true
-                                    visible = false
-                                }
                                 !fullscreen && total > swipeThreshold -> onMinimize()
                                 !fullscreen && total < -swipeThreshold -> onSetFullscreen(true)
                             }
@@ -518,6 +551,18 @@ fun PlayerWithControls(
                             }
                             // Schermo intero, verso il basso: il video segue il dito e si rimpicciolisce.
                             if (fullscreen && !relatedOpen) exitDragPx = total.coerceAtLeast(0f)
+                            // Schermo intero, verso l'alto: i consigliati salgono insieme al dito
+                            // (e scendono, se già aperti).
+                            if (fullscreen && relatedNow.isNotEmpty() && (relatedOpen || total < 0f || relatedDragging)) {
+                                if (!relatedDragging) {
+                                    relatedDragging = true
+                                    relatedAnim?.cancel()
+                                    if (!relatedOpen) visible = false
+                                }
+                                val h = relatedHeightPx()
+                                relatedP = if (relatedOpen) (1f - total.coerceAtLeast(0f) / h).coerceIn(0f, 1f)
+                                else (-total / h).coerceIn(0f, 1f)
+                            }
                         },
                     )
                 }
@@ -711,17 +756,33 @@ fun PlayerWithControls(
             }
         }
         // ---- Consigliati a schermo intero ----
-        AnimatedVisibility(
-            visible = relatedOpen,
-            enter = androidx.compose.animation.slideInVertically { it } + fadeIn(),
-            exit = androidx.compose.animation.slideOutVertically { it } + fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-            RelatedOverlay(
-                related = related,
-                onOpen = { relatedOpen = false; onOpenRelated(it) },
-                onClose = { relatedOpen = false },
-            )
+        // Composto solo mentre è almeno in parte visibile; la posizione è letta in fase di disegno.
+        val relatedShown by remember { androidx.compose.runtime.derivedStateOf { relatedP > 0f } }
+        if (relatedShown) {
+            Box(
+                Modifier.align(Alignment.BottomCenter)
+                    .onSizeChanged { relatedH = it.height }
+                    .graphicsLayer {
+                        val p = relatedP
+                        translationY = (1f - p) * relatedHeightPx()
+                        alpha = (p * 5f).coerceAtMost(1f)
+                    }
+                    // Trascinando il pannello stesso in giù si chiude, sempre seguendo il dito.
+                    .draggable(
+                        state = androidx.compose.foundation.gestures.rememberDraggableState { d ->
+                            relatedAnim?.cancel()
+                            relatedP = (relatedP - d / relatedHeightPx()).coerceIn(0f, 1f)
+                        },
+                        orientation = androidx.compose.foundation.gestures.Orientation.Vertical,
+                        onDragStopped = { v -> settleRelated(v) },
+                    )
+            ) {
+                RelatedOverlay(
+                    related = related,
+                    onOpen = { relatedAnim?.cancel(); relatedOpen = false; relatedP = 0f; onOpenRelated(it) },
+                    onClose = { animateRelated(false) },
+                )
+            }
         }
         // ---- Informazioni sul video (a destra, schermo intero) ----
         if (infoPanel != null) {

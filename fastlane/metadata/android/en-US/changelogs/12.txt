@@ -1,0 +1,1 @@
+Full screen: the "Up next" panel now follows your finger when you drag it up (and back down to close it), like the official YouTube app.
