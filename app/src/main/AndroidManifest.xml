@@ -19,6 +19,11 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Trasmissione dello schermo sui Samsung (Smart View). -->
+    <queries>
+        <package android:name="com.samsung.android.smartmirroring" />
+    </queries>
+
     <application
         android:name=".MauzTubeApp"
         android:allowBackup="true"

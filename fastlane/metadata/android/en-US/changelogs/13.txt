@@ -1,0 +1,1 @@
+New cast button in the player controls: it opens screen casting to a TV (Chromecast, Google TV, Samsung Smart View, Miracast). No proprietary libraries are used.

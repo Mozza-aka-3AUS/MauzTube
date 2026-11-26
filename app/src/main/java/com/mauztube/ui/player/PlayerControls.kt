@@ -630,6 +630,15 @@ fun PlayerWithControls(
                     if (queueSize > 0) {
                         ControlButton(AppIcons.Queue, tr("Queue ($queueSize)", "Coda ($queueSize)"), onOpenQueue, tint = primary)
                     }
+                    // Trasmissione dello schermo alla TV (Chromecast, Smart View, Miracast…).
+                    // Non sulla TV stessa.
+                    if (!isTv) {
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        ControlButton(AppIcons.Cast, tr("Cast screen", "Trasmetti schermo"), {
+                            interaction++
+                            com.mauztube.util.ScreenCast.open(context)
+                        })
+                    }
                     ControlButton(
                         AppIcons.Autoplay, tr("Autoplay", "Riproduzione automatica"),
                         onClick = {

@@ -25,8 +25,8 @@ android {
         applicationId = "com.mauztube"
         minSdk = 24
         targetSdk = 37
-        versionCode = 12
-        versionName = "1.1.1"
+        versionCode = 13
+        versionName = "1.1.2"
         vectorDrawables.useSupportLibrary = true
     }
 

@@ -1,0 +1,1 @@
+Nuovo tasto Trasmetti nei comandi del player: apre la trasmissione dello schermo alla TV (Chromecast, Google TV, Smart View di Samsung, Miracast). Non usa librerie proprietarie.
